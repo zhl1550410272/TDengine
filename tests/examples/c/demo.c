@@ -2,14 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <taos.h>  // TAOS header file
+#include <power.h>
 
-void taosMsleep(int mseconds);
+void powerMsleep(int mseconds);
 
 int main(int argc, char *argv[]) {
-  TAOS *    taos;
+  POWER *    power;
   char      qstr[1024];
-  TAOS_RES *result;
+  POWER_RES *result;
 
   // connect to server
   if (argc < 2) {
@@ -17,42 +17,42 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  // init TAOS
-  taos_init();
+  // init POWER
+  power_init();
 
-  taos = taos_connect(argv[1], "root", "powerdb", NULL, 0);
-  if (taos == NULL) {
-    printf("failed to connect to server, reason:%s\n", taos_errstr(taos));
+  power = power_connect(argv[1], "root", "powerdb", NULL, 0);
+  if (power == NULL) {
+    printf("failed to connect to server, reason:%s\n", power_errstr(power));
     exit(1);
   }
   printf("success to connect to server\n");
   
 
-  taos_query(taos, "drop database demo");
-  if (taos_query(taos, "create database demo") != 0) {
-    printf("failed to create database, reason:%s\n", taos_errstr(taos));
+  power_query(power, "drop database demo");
+  if (power_query(power, "create database demo") != 0) {
+    printf("failed to create database, reason:%s\n", power_errstr(power));
     exit(1);
   }
   printf("success to create database\n");
 
-  taos_query(taos, "use demo");
+  power_query(power, "use demo");
 
   // create table
-  if (taos_query(taos, "create table m1 (ts timestamp, speed int)") != 0) {
-    printf("failed to create table, reason:%s\n", taos_errstr(taos));
+  if (power_query(power, "create table m1 (ts timestamp, speed int)") != 0) {
+    printf("failed to create table, reason:%s\n", power_errstr(power));
     exit(1);
   }
   printf("success to create table\n");
 
   // sleep for one second to make sure table is created on data node
-  // taosMsleep(1000);
+  // powerMsleep(1000);
 
   // insert 10 records
   int i = 0;
   for (i = 0; i < 10; ++i) {
     sprintf(qstr, "insert into m1 values (%ld, %d)", 1546300800000 + i * 1000, i * 10);
-    if (taos_query(taos, qstr)) {
-      printf("failed to insert row: %i, reason:%s\n", i, taos_errstr(taos));
+    if (power_query(power, qstr)) {
+      printf("failed to insert row: %i, reason:%s\n", i, power_errstr(power));
     }
     //sleep(1);
   }
@@ -60,33 +60,33 @@ int main(int argc, char *argv[]) {
 
   // query the records
   sprintf(qstr, "SELECT * FROM m1");
-  if (taos_query(taos, qstr) != 0) {
-    printf("failed to select, reason:%s\n", taos_errstr(taos));
+  if (power_query(power, qstr) != 0) {
+    printf("failed to select, reason:%s\n", power_errstr(power));
     exit(1);
   }
 
-  result = taos_use_result(taos);
+  result = power_use_result(power);
 
   if (result == NULL) {
-    printf("failed to get result, reason:%s\n", taos_errstr(taos));
+    printf("failed to get result, reason:%s\n", power_errstr(power));
     exit(1);
   }
 
-  TAOS_ROW    row;
+  POWER_ROW    row;
   int         rows = 0;
-  int         num_fields = taos_field_count(taos);
-  TAOS_FIELD *fields = taos_fetch_fields(result);
+  int         num_fields = power_field_count(power);
+  POWER_FIELD *fields = power_fetch_fields(result);
   char        temp[256];
 
   printf("select * from table, result:\n");
   // fetch the records row by row
-  while ((row = taos_fetch_row(result))) {
+  while ((row = power_fetch_row(result))) {
     rows++;
-    taos_print_row(temp, row, fields, num_fields);
+    power_print_row(temp, row, fields, num_fields);
     printf("%s\n", temp);
   }
 
-  taos_free_result(result);
+  power_free_result(result);
   printf("====demo end====\n\n");
   return getchar();
 }
