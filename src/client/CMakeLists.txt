@@ -17,9 +17,12 @@ IF ((TD_LINUX_64) OR (TD_LINUX_32 AND TD_ARM))
   SET_TARGET_PROPERTIES(taos_static PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
   # generate dynamic library (*.so)
-  ADD_LIBRARY(taos SHARED ${SRC})
-  TARGET_LINK_LIBRARIES(taos trpc tutil pthread m rt)
-  SET_TARGET_PROPERTIES(taos PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+
+  # oem begin
+  ADD_LIBRARY(power SHARED ${SRC})
+  TARGET_LINK_LIBRARIES(power trpc tutil pthread m rt)
+  SET_TARGET_PROPERTIES(power PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+  # oem end
 
   #set version of .so
   #VERSION    so version
@@ -39,7 +42,10 @@ IF ((TD_LINUX_64) OR (TD_LINUX_32 AND TD_ARM))
   ENDIF ()
 
   MESSAGE(STATUS "build version ${VERSION_INFO}")
-  SET_TARGET_PROPERTIES(taos PROPERTIES VERSION ${VERSION_INFO} SOVERSION 1)
+
+  # oem begin
+  SET_TARGET_PROPERTIES(power PROPERTIES VERSION ${VERSION_INFO} SOVERSION 1)
+  # oem end
   
 ELSEIF (TD_WINDOWS_64)
   INCLUDE_DIRECTORIES(${TD_COMMUNITY_DIR}/deps/jni/windows)
@@ -50,9 +56,12 @@ ELSEIF (TD_WINDOWS_64)
   TARGET_LINK_LIBRARIES(taos_static trpc tutil)
 
   # generate dynamic library (*.dll)
-  ADD_LIBRARY(taos SHARED ${SRC})
-  SET_TARGET_PROPERTIES(taos PROPERTIES LINK_FLAGS /DEF:${TD_COMMUNITY_DIR}/src/client/src/taos.def)
-  TARGET_LINK_LIBRARIES(taos trpc)
+
+  # oem begin
+  ADD_LIBRARY(power SHARED ${SRC})
+  SET_TARGET_PROPERTIES(power PROPERTIES LINK_FLAGS /DEF:${TD_COMMUNITY_DIR}/src/client/src/taos.def)
+  TARGET_LINK_LIBRARIES(power trpc)
+  # oem end
 
 ELSEIF (TD_DARWIN_64)
   INCLUDE_DIRECTORIES(${TD_COMMUNITY_DIR}/deps/jni/linux)

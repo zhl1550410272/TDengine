@@ -8,6 +8,8 @@ INCLUDE_DIRECTORIES(inc)
 
 IF ((TD_LINUX_64) OR (TD_LINUX_32 AND TD_ARM))
   AUX_SOURCE_DIRECTORY(. SRC)
-  ADD_EXECUTABLE(taosdemo ${SRC})
-  TARGET_LINK_LIBRARIES(taosdemo taos_static)
+  # oem begin
+  ADD_EXECUTABLE(powerdemo ${SRC})
+  TARGET_LINK_LIBRARIES(powerdemo taos_static)
+  # oem end
 ENDIF ()

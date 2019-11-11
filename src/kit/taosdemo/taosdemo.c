@@ -41,10 +41,10 @@
 
 /* The options we understand. */
 static struct argp_option options[] = {
-  {0, 'h', "host",                     0, "The host to connect to TDEngine. Default is localhost.",                                                           0},
+  {0, 'h', "host",                     0, "The host to connect to PowerDB. Default is localhost.",                                                           0},
   {0, 'p', "port",                     0, "The TCP/IP port number to use for the connection. Default is 0.",                                                  1},
-  {0, 'u', "user",                     0, "The TDEngine user name to use when connecting to the server. Default is 'root'.",                                  2},
-  {0, 'a', "password",                 0, "The password to use when connecting to the server. Default is 'taosdata'.",                                        3},
+  {0, 'u', "user",                     0, "The PowerDB user name to use when connecting to the server. Default is 'root'.",                                  2},
+  {0, 'a', "password",                 0, "The password to use when connecting to the server. Default is 'powerdb'.",                                        3},
   {0, 'd', "database",                 0, "Destination database. Default is 'test'.",                                                                         3},
   {0, 'm', "table_prefix",             0, "Table prefix name. Default is 't'.",                                                                               3},
   {0, 'M', 0,                          0, "Use metric flag.",                                                                                                 13},
@@ -57,7 +57,7 @@ static struct argp_option options[] = {
   {0, 'r', "num_of_records_per_req",   0, "The number of records per request. Default is 1000.",                                                              10},
   {0, 't', "num_of_tables",            0, "The number of tables. Default is 10000.",                                                                          11},
   {0, 'n', "num_of_records_per_table", 0, "The number of records per table. Default is 100000.",                                                              12},
-  {0, 'f', "config_directory",         0, "Configuration directory. Default is '/etc/taos/'.",                                                                14},
+  {0, 'f', "config_directory",         0, "Configuration directory. Default is '/etc/power/'.",                                                                14},
   {0, 'x', 0,                          0, "Insert only flag.",                                                                                                13},
   {0}};
 
@@ -267,7 +267,7 @@ int main(int argc, char *argv[]) {
   struct arguments arguments = {NULL,
                                 0,
                                 "root",
-                                "taosdata",
+                                "powerdb",
                                 "test",
                                 "t",
                                 false,
@@ -362,7 +362,7 @@ int main(int argc, char *argv[]) {
   taos_init();
   TAOS *taos = taos_connect(ip_addr, user, pass, NULL, port);
   if (taos == NULL) {
-    fprintf(stderr, "Failed to connect to TDengine, reason:%s\n", taos_errstr(taos));
+    fprintf(stderr, "Failed to connect to PowerDB, reason:%s\n", taos_errstr(taos));
     taos_close(taos);
     return 1;
   }

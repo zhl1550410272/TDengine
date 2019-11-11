@@ -17,16 +17,16 @@
 
 void printHelp() {
   char indent[10] = "        ";
-  printf("taos shell is used to test the TDEngine database\n");
+  printf("power shell is used to test the PowerDB database\n");
 
   printf("%s%s\n", indent, "-h");
-  printf("%s%s%s\n", indent, indent, "TDEngine server IP address to connect. The default host is localhost.");
+  printf("%s%s%s\n", indent, indent, "PowerDB server IP address to connect. The default host is localhost.");
   printf("%s%s\n", indent, "-p");
   printf("%s%s%s\n", indent, indent, "The password to use when connecting to the server.");
   printf("%s%s\n", indent, "-P");
   printf("%s%s%s\n", indent, indent, "The TCP/IP port number to use for the connection");
   printf("%s%s\n", indent, "-u");
-  printf("%s%s%s\n", indent, indent, "The TDEngine user name to use when connecting to the server.");
+  printf("%s%s%s\n", indent, indent, "The PowerDB user name to use when connecting to the server.");
   printf("%s%s\n", indent, "-c");
   printf("%s%s%s\n", indent, indent, "Configuration directory.");
   printf("%s%s\n", indent, "-s");

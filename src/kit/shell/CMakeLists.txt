@@ -11,7 +11,9 @@ IF ((TD_LINUX_64) OR (TD_LINUX_32 AND TD_ARM))
   LIST(REMOVE_ITEM SRC ./src/shellWindows.c)
   ADD_EXECUTABLE(shell ${SRC})  
   TARGET_LINK_LIBRARIES(shell taos_static)
-  SET_TARGET_PROPERTIES(shell PROPERTIES OUTPUT_NAME taos)
+  # oem begin
+  SET_TARGET_PROPERTIES(shell PROPERTIES OUTPUT_NAME power)
+  # oem end
 ELSEIF (TD_WINDOWS_64)
   INCLUDE_DIRECTORIES(${TD_COMMUNITY_DIR}/deps/pthread)
   INCLUDE_DIRECTORIES(${TD_COMMUNITY_DIR}/deps/regex)
@@ -20,13 +22,17 @@ ELSEIF (TD_WINDOWS_64)
   LIST(APPEND SRC ./src/shellWindows.c)
   ADD_EXECUTABLE(shell ${SRC})
   TARGET_LINK_LIBRARIES(shell taos_static)
-  SET_TARGET_PROPERTIES(shell PROPERTIES OUTPUT_NAME taos)
+  # oem begin
+  SET_TARGET_PROPERTIES(shell PROPERTIES OUTPUT_NAME power)
+  # oem end
 ELSEIF (TD_DARWIN_64)
   LIST(APPEND SRC ./src/shellEngine.c)
   LIST(APPEND SRC ./src/shellMain.c)
   LIST(APPEND SRC ./src/shellWindows.c)
   ADD_EXECUTABLE(shell ${SRC})
   TARGET_LINK_LIBRARIES(shell taos_static)
-  SET_TARGET_PROPERTIES(shell PROPERTIES OUTPUT_NAME taos)
+  # oem begin
+  SET_TARGET_PROPERTIES(shell PROPERTIES OUTPUT_NAME power)
+  # oem end
 ENDIF ()
 

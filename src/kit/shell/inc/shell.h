@@ -28,7 +28,7 @@
 #define MAX_PASSWORD_SIZE      20
 #define MAX_HISTORY_SIZE       1000
 #define MAX_COMMAND_SIZE       65536
-#define HISTORY_FILE           ".taos_history"
+#define HISTORY_FILE           ".power_history"
 
 #define BOOL_OUTPUT_LENGTH     6
 #define TINYINT_OUTPUT_LENGTH  6

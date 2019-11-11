@@ -34,16 +34,16 @@
 
 /**************** Global variables ****************/
 #ifdef WINDOWS
-  char    CLIENT_VERSION[] = "Welcome to the TDengine shell from windows, client version:%s ";
+  char    CLIENT_VERSION[] = "Welcome to the PowerDB shell from windows, client version:%s ";
 #elif defined(DARWIN)
-  char    CLIENT_VERSION[] = "Welcome to the TDengine shell from mac, client version:%s ";
+  char    CLIENT_VERSION[] = "Welcome to the PowerDB shell from mac, client version:%s ";
 #else
-  char    CLIENT_VERSION[] = "Welcome to the TDengine shell from linux, client version:%s ";
+  char    CLIENT_VERSION[] = "Welcome to the PowerDB shell from linux, client version:%s ";
 #endif
-char      SERVER_VERSION[] = "server version:%s\nCopyright (c) 2017 by TAOS Data, Inc. All rights reserved.\n\n";
-char      PROMPT_HEADER[] = "taos> ";
-char      CONTINUE_PROMPT[] = "   -> ";
-int       prompt_size = 6;
+char      SERVER_VERSION[] = "server version:%s\nCopyright (c) 2017 by PowerDb, Inc. All rights reserved.\n\n";
+char      PROMPT_HEADER[] = "power> ";
+char      CONTINUE_PROMPT[] = "    -> ";
+int       prompt_size = 7;
 TAOS_RES *result = NULL;
 History   history;
 
