@@ -1001,7 +1001,7 @@ int tsCfgDynamicOptions(char *msg) {
 }
 
 void tsPrintGlobalConfig() {
-  pPrint("   taos config & system info:");
+  pPrint("   powerdb config & system info:");
   pPrint("==================================");
 
   for (int i = 0; i < tsGlobalConfigNum; ++i) {

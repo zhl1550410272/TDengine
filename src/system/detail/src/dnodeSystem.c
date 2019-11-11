@@ -126,7 +126,7 @@ int dnodeInitSystem() {
 
   if (stat(logDir, &dirstat) < 0) mkdir(logDir, 0755);
 
-  sprintf(temp, "%s/taosdlog", logDir);
+  sprintf(temp, "%s/powerdlog", logDir);
   if (taosInitLog(temp, tsNumOfLogLines, 1) < 0) printf("failed to init log file\n");
 
   if (!tsReadGlobalConfig()) {  // TODO : Change this function
