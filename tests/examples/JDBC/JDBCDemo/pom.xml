@@ -58,12 +58,14 @@
             </plugin>
         </plugins>
     </build>
-
+    
     <dependencies>
         <dependency>
-            <groupId>com.taosdata.jdbc</groupId>
-            <artifactId>taos-jdbcdriver</artifactId>
-            <version>1.0.1</version>
+            <groupId>power</groupId>
+            <artifactId>jdbcdriver</artifactId>
+            <version>1.0.2-dist</version>
+            <scope>system</scope>
+            <systemPath>/usr/local/power/connector/power-jdbcdriver-1.0.2-dist.jar</systemPath>
         </dependency>
     </dependencies>
 </project>
