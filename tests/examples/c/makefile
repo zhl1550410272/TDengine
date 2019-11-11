@@ -1,4 +1,4 @@
-# Copyright (c) 2017 by TAOS Technologies, Inc.
+# Copyright (c) 2017 by PowerDB Technologies, Inc.
 # todo: library dependency, header file dependency
 
 ROOT=./
@@ -9,15 +9,9 @@ CFLAGS = -O3 -g -Wall -Wno-deprecated -fPIC -Wno-unused-result -Wconversion -Wno
 all: $(TARGET)
 
 exe:
-	gcc $(CFLAGS) ./asyncdemo.c -o $(ROOT)/asyncdemo $(LFLAGS)
 	gcc $(CFLAGS) ./demo.c -o $(ROOT)/demo $(LFLAGS)
-	gcc $(CFLAGS) ./stream.c -o $(ROOT)/stream $(LFLAGS)
-	gcc $(CFLAGS) ./subscribe.c -o $(ROOT)/subscribe $(LFLAGS)
 
 clean:
-	rm $(ROOT)asyncdemo
 	rm $(ROOT)demo
-	rm $(ROOT)stream
-	rm $(ROOT)subscribe
-	
+
 	

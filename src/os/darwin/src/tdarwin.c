@@ -33,11 +33,11 @@
 #include "tsdb.h"
 #include "tutil.h"
 
-char configDir[TSDB_FILENAME_LEN] = "~/TDengine/cfg";
-char tsDirectory[TSDB_FILENAME_LEN] = "~/TDengine/data";
-char dataDir[TSDB_FILENAME_LEN] = "~/TDengine/data";
-char logDir[TSDB_FILENAME_LEN] = "~/TDengine/log";
-char scriptDir[TSDB_FILENAME_LEN] = "~/TDengine/script";
+char configDir[TSDB_FILENAME_LEN] = "~/PowerDB/cfg";
+char tsDirectory[TSDB_FILENAME_LEN] = "~/PowerDB/data";
+char dataDir[TSDB_FILENAME_LEN] = "~/PowerDB/data";
+char logDir[TSDB_FILENAME_LEN] = "~/PowerDB/log";
+char scriptDir[TSDB_FILENAME_LEN] = "~/PowerDB/script";
 
 int64_t str2int64(char *str) {
   char *endptr = NULL;

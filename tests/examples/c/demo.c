@@ -1,21 +1,3 @@
-/*
- * Copyright (c) 2019 TAOS Data, Inc. <jhtao@taosdata.com>
- *
- * This program is free software: you can use, redistribute, and/or modify
- * it under the terms of the GNU Affero General Public License, version 3
- * or later ("AGPL"), as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- */
-
-// TAOS standard API example. The same syntax as MySQL, but only a subet
-// to compile: gcc -o demo demo.c -ltaos
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,7 +20,7 @@ int main(int argc, char *argv[]) {
   // init TAOS
   taos_init();
 
-  taos = taos_connect(argv[1], "root", "taosdata", NULL, 0);
+  taos = taos_connect(argv[1], "root", "powerdb", NULL, 0);
   if (taos == NULL) {
     printf("failed to connect to server, reason:%s\n", taos_errstr(taos));
     exit(1);

@@ -28,11 +28,11 @@
 #include "tsdb.h"
 #include "tglobalcfg.h"
 
-char configDir[TSDB_FILENAME_LEN] = "C:/TDengine/cfg";
-char tsDirectory[TSDB_FILENAME_LEN] = "C:/TDengine/data";
-char logDir[TSDB_FILENAME_LEN] = "C:/TDengine/log";
-char dataDir[TSDB_FILENAME_LEN] = "C:/TDengine/data";
-char scriptDir[TSDB_FILENAME_LEN] = "C:/TDengine/script";
+char configDir[TSDB_FILENAME_LEN] = "C:/PowerDB/cfg";
+char tsDirectory[TSDB_FILENAME_LEN] = "C:/PowerDB/data";
+char logDir[TSDB_FILENAME_LEN] = "C:/PowerDB/log";
+char dataDir[TSDB_FILENAME_LEN] = "C:/PowerDB/data";
+char scriptDir[TSDB_FILENAME_LEN] = "C:/PowerDB/script";
 
 bool taosCheckPthreadValid(pthread_t thread) {
   return thread.p != NULL;

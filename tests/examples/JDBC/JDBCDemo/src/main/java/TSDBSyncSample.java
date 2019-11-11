@@ -6,7 +6,7 @@ public class TSDBSyncSample {
 
     private String host = "127.0.0.1";
     private String user = "root";
-    private String password = "taosdata";
+    private String password = "powerdb";
     private int port = 0;
     private String jdbcUrl = "";
 
@@ -70,7 +70,6 @@ public class TSDBSyncSample {
     }
 
     private void doMakeJdbcUrl() {
-        // jdbc:TSDB://127.0.0.1:0/dbname?user=root&password=taosdata
         System.out.println("\nJDBC URL to use:");
         this.jdbcUrl = String.format("%s%s:%d/%s?user=%s&password=%s", JDBC_PROTOCAL, this.host, this.port, "",
                 this.user, this.password);
