@@ -131,12 +131,12 @@ int dnodeInitSystem() {
 
   if (!tsReadGlobalConfig()) {  // TODO : Change this function
     tsPrintGlobalConfig();
-    dError("TDengine read global config failed");
+    dError("PowerDB read global config failed");
     return -1;
   }
 
   if (taosCreateTierDirectory() != 0) {
-    dError("TDengine init tier directory failed");
+    dError("PowerDB init tier directory failed");
     return -1;
   }
 
@@ -148,7 +148,7 @@ int dnodeInitSystem() {
   dnodeInitModules();
   pthread_mutex_init(&dmutex, NULL);
 
-  dPrint("starting to initialize TDengine ...");
+  dPrint("starting to initialize PowerDB ...");
 
   vnodeInitQHandle();
   if (dnodeInitSystemSpec() < 0) {
@@ -158,14 +158,14 @@ int dnodeInitSystem() {
   for (int mod = 0; mod < TSDB_MOD_MAX; ++mod) {
     if (tsModule[mod].num != 0 && tsModule[mod].initFp) {
       if ((*tsModule[mod].initFp)() != 0) {
-        dError("TDengine initialization failed");
+        dError("PowerDB initialization failed");
         return -1;
       }
     }
   }
 
   if (vnodeInitSystem() != 0) {
-    dError("TDengine vnodes initialization failed");
+    dError("PowerDB vnodes initialization failed");
     return -1;
   }
 
@@ -173,7 +173,7 @@ int dnodeInitSystem() {
 
   dnodeStartModuleSpec();
 
-  dPrint("TDengine is initialized successfully");
+  dPrint("PowerDB is initialized successfully");
 
   return 0;
 }

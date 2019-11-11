@@ -152,7 +152,7 @@ static struct argp_option options[] = {
   // input/output file
   {"output",        'o', "OUTPUT",     0, "Output file name.",                                        1},
   {"input",         'i', "INPUT",      0, "Input file name.",                                         1},
-  {"config",        'c', "CONFIG_DIR", 0, "Configure directory. Default is /etc/taos/taos.cfg.",      1},
+  {"config",        'c', "CONFIG_DIR", 0, "Configure directory. Default is /etc/power/power.cfg.",      1},
   {"encode", 'e', "ENCODE", 0, "Input file encoding.", 1},
   // dump unit options
   {"all-databases", 'A', 0,            0, "Dump all databases.",                                      2},

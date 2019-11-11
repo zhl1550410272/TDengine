@@ -800,13 +800,13 @@ void tsReadGlobalLogConfig() {
   if (full_path.we_wordv != NULL && full_path.we_wordv[0] != NULL) {
     strcpy(configDir, full_path.we_wordv[0]);
   } else {
-    printf("configDir:%s not there, use default value: /etc/taos", configDir);
-    strcpy(configDir, "/etc/taos");
+    printf("configDir:%s not there, use default value: /etc/power", configDir);
+    strcpy(configDir, "/etc/power");
   }
   wordfree(&full_path);
 
   tsReadLogOption("logDir", logDir);
-  sprintf(fileName, "%s/taos.cfg", configDir);
+  sprintf(fileName, "%s/power.cfg", configDir);
   fp = fopen(fileName, "r");
   if (fp == NULL) {
     printf("\noption file:%s not found, all options are set to system default\n", fileName);
@@ -846,7 +846,7 @@ bool tsReadGlobalConfig() {
   int    olen, vlen, vlen1;
   char   fileName[128];
 
-  sprintf(fileName, "%s/taos.cfg", configDir);
+  sprintf(fileName, "%s/power.cfg", configDir);
   fp = fopen(fileName, "r");
   if (fp == NULL) {
   } else {
