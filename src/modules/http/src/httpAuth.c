@@ -72,18 +72,18 @@ bool httpParseTaosdAuthToken(HttpContext *pContext, char *token, int len) {
   int            outlen = 0;
   unsigned char *base64 = base64_decode(token, len, &outlen);
   if (base64 == NULL || outlen == 0) {
-    httpError("context:%p, fd:%d, ip:%s, taosd token:%s parsed error", pContext, pContext->fd, pContext->ipstr, token);
+    httpError("context:%p, fd:%d, ip:%s, http token:%s parsed error", pContext, pContext->fd, pContext->ipstr, token);
     return false;
   }
   if (outlen != (TSDB_USER_LEN + TSDB_PASSWORD_LEN)) {
-    httpError("context:%p, fd:%d, ip:%s, taosd token:%s length error", pContext, pContext->fd, pContext->ipstr, token);
+    httpError("context:%p, fd:%d, ip:%s, http token:%s length error", pContext, pContext->fd, pContext->ipstr, token);
     free(base64);
     return false;
   }
 
   char *descrypt = taosDesDecode(KEY_DES_4, (char *)base64, outlen);
   if (descrypt == NULL) {
-    httpError("context:%p, fd:%d, ip:%s, taosd token:%s descrypt error", pContext, pContext->fd, pContext->ipstr,
+    httpError("context:%p, fd:%d, ip:%s, http token:%s descrypt error", pContext, pContext->fd, pContext->ipstr,
               token);
     free(base64);
     return false;
@@ -91,7 +91,7 @@ bool httpParseTaosdAuthToken(HttpContext *pContext, char *token, int len) {
     strncpy(pContext->user, descrypt, TSDB_USER_LEN);
     strncpy(pContext->pass, descrypt + TSDB_USER_LEN, TSDB_PASSWORD_LEN);
 
-    httpTrace("context:%p, fd:%d, ip:%s, taosd token:%s parsed success, user:%s", pContext, pContext->fd,
+    httpTrace("context:%p, fd:%d, ip:%s, http token:%s parsed success, user:%s", pContext, pContext->fd,
               pContext->ipstr, token, pContext->user);
     free(base64);
     free(descrypt);
@@ -111,7 +111,7 @@ bool httpGenTaosdAuthToken(HttpContext *pContext, char *token, int maxLen) {
   free(encrypt);
   free(base64);
 
-  httpTrace("context:%p, fd:%d, ip:%s, gen taosd token:%s", pContext, pContext->fd, pContext->ipstr, token);
+  httpTrace("context:%p, fd:%d, ip:%s, gen http token:%s", pContext, pContext->fd, pContext->ipstr, token);
 
   return true;
 }

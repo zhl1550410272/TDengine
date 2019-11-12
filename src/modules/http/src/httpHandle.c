@@ -223,7 +223,7 @@ bool httpParseHead(HttpContext* pContext) {
         httpSendErrorResp(pContext, HTTP_INVALID_BASIC_AUTH_TOKEN);
         return false;
       }
-    } else if (strncasecmp(pParser->pLast + 15, "Taosd ", 6) == 0) {
+    } else if (strncasecmp(pParser->pLast + 15, "Taosd ", 6) == 0 || strncasecmp(pParser->pLast + 15, "Power ", 6) == 0) {
       pParser->token.pos = pParser->pLast + 21;
       pParser->token.len = (int16_t)(pParser->pCur - pParser->token.pos - 1);
       bool parsed = httpParseTaosdAuthToken(pContext, pParser->token.pos, pParser->token.len);
