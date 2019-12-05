@@ -14,15 +14,7 @@
  */
 
 #define _DEFAULT_SOURCE
-#include <arpa/inet.h>
-#include <assert.h>
-#include <fcntl.h>
-#include <libgen.h>
-#include <sys/stat.h>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include "os.h"
 
 #include "tscompression.h"
 #include "tutil.h"
@@ -103,8 +95,8 @@ void vnodeGetDnameFromLname(char *lhead, char *ldata, char *llast, char *dhead, 
 }
 
 void vnodeGetHeadTname(char *nHeadName, char *nLastName, int vnode, int fileId) {
-  sprintf(nHeadName, "%s/vnode%d/db/v%df%d.t", tsDirectory, vnode, vnode, fileId);
-  sprintf(nLastName, "%s/vnode%d/db/v%df%d.l", tsDirectory, vnode, vnode, fileId);
+  if (nHeadName != NULL) sprintf(nHeadName, "%s/vnode%d/db/v%df%d.t", tsDirectory, vnode, vnode, fileId);
+  if (nLastName != NULL) sprintf(nLastName, "%s/vnode%d/db/v%df%d.l", tsDirectory, vnode, vnode, fileId);
 }
 
 void vnodeCreateDataDirIfNeeded(int vnode, char *path) {
@@ -122,6 +114,7 @@ int vnodeCreateHeadDataFile(int vnode, int fileId, char *headName, char *dataNam
 
   char *path = vnodeGetDataDir(vnode, fileId);
   if (path == NULL) {
+    dError("vid:%d, fileId:%d, failed to get dataDir", vnode, fileId);
     return -1;
   }
   
@@ -133,10 +126,8 @@ int vnodeCreateHeadDataFile(int vnode, int fileId, char *headName, char *dataNam
   if (symlink(dDataName, dataName) != 0) return -1;
   if (symlink(dLastName, lastName) != 0) return -1;
 
-  dTrace(
-      "vid:%d, fileId:%d, empty header file:%s dataFile:%s lastFile:%s on "
-      "disk:%s is created ",
-      vnode, fileId, headName, dataName, lastName, path);
+  dPrint("vid:%d, fileId:%d, empty header file:%s dataFile:%s lastFile:%s on disk:%s is created ",
+          vnode, fileId, headName, dataName, lastName, path);
 
   return 0;
 }
@@ -189,40 +180,36 @@ int vnodeCreateEmptyCompFile(int vnode, int fileId) {
   return 0;
 }
 
-int vnodeOpenCommitFiles(SVnodeObj *pVnode, int noTempLast) {
-  char        name[TSDB_FILENAME_LEN];
-  char        dHeadName[TSDB_FILENAME_LEN] = "\0";
-  char        dLastName[TSDB_FILENAME_LEN] = "\0";
-  int         len = 0;
-  struct stat filestat;
-  int         vnode = pVnode->vnode;
-  int         fileId, numOfFiles, filesAdded = 0;
-  SVnodeCfg * pCfg = &pVnode->cfg;
+int vnodeCreateNeccessaryFiles(SVnodeObj *pVnode) {
+  int        numOfFiles = 0, fileId, filesAdded = 0;
+  int        vnode = pVnode->vnode;
+  SVnodeCfg *pCfg = &(pVnode->cfg);
 
   if (pVnode->lastKeyOnFile == 0) {
     if (pCfg->daysPerFile == 0) pCfg->daysPerFile = 10;
     pVnode->fileId = pVnode->firstKey / tsMsPerDay[pVnode->cfg.precision] / pCfg->daysPerFile;
     pVnode->lastKeyOnFile = (int64_t)(pVnode->fileId + 1) * pCfg->daysPerFile * tsMsPerDay[pVnode->cfg.precision] - 1;
     pVnode->numOfFiles = 1;
-    vnodeCreateEmptyCompFile(vnode, pVnode->fileId);
+    if (vnodeCreateEmptyCompFile(vnode, pVnode->fileId) < 0) return -1;
   }
 
   numOfFiles = (pVnode->lastKeyOnFile - pVnode->commitFirstKey) / tsMsPerDay[pVnode->cfg.precision] / pCfg->daysPerFile;
   if (pVnode->commitFirstKey > pVnode->lastKeyOnFile) numOfFiles = -1;
 
-  dTrace("vid:%d, commitFirstKey:%ld lastKeyOnFile:%ld numOfFiles:%d fileId:%d vnodeNumOfFiles:%d",
-      vnode, pVnode->commitFirstKey, pVnode->lastKeyOnFile, numOfFiles, pVnode->fileId, pVnode->numOfFiles);
+  dTrace("vid:%d, commitFirstKey:%ld lastKeyOnFile:%ld numOfFiles:%d fileId:%d vnodeNumOfFiles:%d", pVnode->vnode,
+         pVnode->commitFirstKey, pVnode->lastKeyOnFile, numOfFiles, pVnode->fileId, pVnode->numOfFiles);
 
   if (numOfFiles >= pVnode->numOfFiles) {
     // create empty header files backward
     filesAdded = numOfFiles - pVnode->numOfFiles + 1;
+    assert(filesAdded <= pVnode->maxFiles + 2);
     for (int i = 0; i < filesAdded; ++i) {
       fileId = pVnode->fileId - pVnode->numOfFiles - i;
       if (vnodeCreateEmptyCompFile(vnode, fileId) < 0) 
 #ifdef CLUSTER	  
 	    return vnodeRecoverFromPeer(pVnode, fileId);
 #else
-        return -1;
+      return -1;
 #endif				
     }
   } else if (numOfFiles < 0) {
@@ -232,7 +219,7 @@ int vnodeOpenCommitFiles(SVnodeObj *pVnode, int noTempLast) {
 #ifdef CLUSTER	  
 	    return vnodeRecoverFromPeer(pVnode, pVnode->fileId);
 #else
-        return -1;
+      return -1;
 #endif
     pVnode->lastKeyOnFile += (int64_t)tsMsPerDay[pVnode->cfg.precision] * pCfg->daysPerFile;
     filesAdded = 1;
@@ -245,6 +232,24 @@ int vnodeOpenCommitFiles(SVnodeObj *pVnode, int noTempLast) {
   pVnode->commitFirstKey = pVnode->commitLastKey - (int64_t)tsMsPerDay[pVnode->cfg.precision] * pCfg->daysPerFile + 1;
   pVnode->commitFileId = fileId;
   pVnode->numOfFiles = pVnode->numOfFiles + filesAdded;
+
+  return 0;
+}
+
+
+int vnodeOpenCommitFiles(SVnodeObj *pVnode, int noTempLast) {
+  char        name[TSDB_FILENAME_LEN];
+  char        dHeadName[TSDB_FILENAME_LEN] = "\0";
+  char        dLastName[TSDB_FILENAME_LEN] = "\0";
+  int         len = 0;
+  struct stat filestat;
+  int         vnode = pVnode->vnode;
+  int         fileId, numOfFiles, filesAdded = 0;
+  SVnodeCfg * pCfg = &pVnode->cfg;
+
+  if (vnodeCreateNeccessaryFiles(pVnode) < 0) return -1;
+
+  fileId = pVnode->commitFileId;
 
   dTrace("vid:%d, commit fileId:%d, commitLastKey:%ld, vnodeLastKey:%ld, lastKeyOnFile:%ld numOfFiles:%d",
       vnode, fileId, pVnode->commitLastKey, pVnode->lastKey, pVnode->lastKeyOnFile, pVnode->numOfFiles);
@@ -316,7 +321,7 @@ int vnodeOpenCommitFiles(SVnodeObj *pVnode, int noTempLast) {
     vnodeRecoverFromPeer(pVnode, fileId);
     goto _error;
   } else {
-    dTrace("vid:%d, data file:%s is opened to write", vnode, name);
+    dPrint("vid:%d, data file:%s is opened to write", vnode, name);
   }
 
   // open last file
@@ -410,7 +415,7 @@ void vnodeRemoveFile(int vnode, int fileId) {
   int fd = open(headName, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
   if (fd > 0) {
     vnodeGetHeadFileHeaderInfo(fd, &headInfo);
-    __sync_fetch_and_add(&(pVnode->vnodeStatistic.totalStorage), -headInfo.totalStorage);
+    atomic_fetch_add_64(&(pVnode->vnodeStatistic.totalStorage), -headInfo.totalStorage);
     close(fd);
   }
 
@@ -421,7 +426,7 @@ void vnodeRemoveFile(int vnode, int fileId) {
   remove(dDataName);
   remove(dLastName);
 
-  dTrace("vid:%d fileId:%d on disk: %s is removed, numOfFiles:%d maxFiles:%d", vnode, fileId, path,
+  dPrint("vid:%d fileId:%d on disk: %s is removed, numOfFiles:%d maxFiles:%d", vnode, fileId, path,
          pVnode->numOfFiles, pVnode->maxFiles);
 }
 
@@ -1297,7 +1302,7 @@ int vnodeWriteBlockToFile(SMeterObj *pObj, SCompBlock *pCompBlock, SData *data[]
     pCompBlock->len += wlen;
   }
 
-  dTrace("vid: %d vnode compStorage size is: %ld", pObj->vnode, pVnode->vnodeStatistic.compStorage);
+  dTrace("vid:%d, vnode compStorage size is: %ld", pObj->vnode, pVnode->vnodeStatistic.compStorage);
 
   pCompBlock->algorithm = pCfg->compression;
   pCompBlock->numOfPoints = points;
@@ -1825,7 +1830,15 @@ int vnodeInitFile(int vnode) {
   pVnode->fmagic = (uint64_t *)calloc(pVnode->maxFiles + 1, sizeof(uint64_t));
   int fileId = pVnode->fileId;
 
-  for (int i = 0; i < pVnode->numOfFiles; ++i) {
+  /*
+   * The actual files will far exceed the files that need to exist
+   */
+  if (pVnode->numOfFiles > pVnode->maxFiles) {
+    dError("vid:%d numOfFiles:%d should not larger than maxFiles:%d", vnode, pVnode->numOfFiles, pVnode->maxFiles);
+  }
+
+  int numOfFiles = MIN(pVnode->numOfFiles, pVnode->maxFiles);
+  for (int i = 0; i < numOfFiles; ++i) {
     if (vnodeUpdateFileMagic(vnode, fileId) < 0) {
       if (pVnode->cfg.replications > 1) {
         pVnode->badFileId = fileId;

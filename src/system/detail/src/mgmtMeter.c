@@ -14,10 +14,7 @@
  */
 
 #define _DEFAULT_SOURCE
-#include <arpa/inet.h>
-#include <assert.h>
-#include <limits.h>
-#include <stdint.h>
+#include "os.h"
 
 #include "mgmt.h"
 #include "mgmtUtil.h"
@@ -30,6 +27,7 @@
 #include "tsqlfunction.h"
 #include "ttime.h"
 #include "vnodeTagMgmt.h"
+#include "tstatus.h"
 
 extern int64_t sdbVersion;
 
@@ -505,7 +503,7 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
 
   int numOfTables = sdbGetNumOfRows(meterSdb);
   if (numOfTables >= tsMaxTables) {
-    mWarn("numOfTables:%d, exceed tsMaxTables:%d", numOfTables, tsMaxTables);
+    mError("table:%s, numOfTables:%d exceed maxTables:%d", pCreate->meterId, numOfTables, tsMaxTables);
     return TSDB_CODE_TOO_MANY_TABLES;
   }
 
@@ -513,6 +511,7 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
   assert(pAcct != NULL);
   int code = mgmtCheckMeterLimit(pAcct, pCreate);
   if (code != 0) {
+    mError("table:%s, exceed the limit", pCreate->meterId);
     return code;
   }
 
@@ -536,6 +535,7 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
     char *pTagData = (char *)pCreate->schema;  // it is a tag key
     pMetric = mgmtGetMeter(pTagData);
     if (pMetric == NULL) {
+      mError("table:%s, corresponding super table does not exist", pCreate->meterId);
       return TSDB_CODE_INVALID_TABLE;
     }
 
@@ -548,6 +548,7 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
     pMeter->schema = (char *)malloc(size);
     if (pMeter->schema == NULL) {
       mgmtDestroyMeter(pMeter);
+      mError("table:%s, corresponding super table schema is null", pCreate->meterId);
       return TSDB_CODE_INVALID_TABLE;
     }
     memset(pMeter->schema, 0, size);
@@ -559,13 +560,13 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
     pMeter->pTagData = pMeter->schema;
     pMeter->nextColId = pMetric->nextColId;
     memcpy(pMeter->pTagData, pTagData, size);
-
   } else {
     int numOfCols = pCreate->numOfColumns + pCreate->numOfTags;
     size = numOfCols * sizeof(SSchema) + pCreate->sqlLen;
     pMeter->schema = (char *)malloc(size);
     if (pMeter->schema == NULL) {
       mgmtDestroyMeter(pMeter);
+      mError("table:%s, no schema input", pCreate->meterId);
       return TSDB_CODE_SERV_OUT_OF_MEMORY;
     }
     memset(pMeter->schema, 0, size);
@@ -586,7 +587,7 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
       pMeter->pSql = pMeter->schema + numOfCols * sizeof(SSchema);
       memcpy(pMeter->pSql, (char *)(pCreate->schema) + numOfCols * sizeof(SSchema), pCreate->sqlLen);
       pMeter->pSql[pCreate->sqlLen - 1] = 0;
-      mTrace("stream sql len:%d, sql:%s", pCreate->sqlLen, pMeter->pSql);
+      mTrace("table:%s, stream sql len:%d sql:%s", pCreate->meterId, pCreate->sqlLen, pMeter->pSql);
     } else {
       if (pCreate->numOfTags > 0) {
         pMeter->meterType = TSDB_METER_METRIC;
@@ -599,13 +600,14 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
   pMeter->createdTime = taosGetTimestampMs();
   strcpy(pMeter->meterId, pCreate->meterId);
   if (pthread_rwlock_init(&pMeter->rwLock, NULL)) {
-    mError("Failed to init meter lock");
+    mError("table:%s, failed to init meter lock", pCreate->meterId);
     mgmtDestroyMeter(pMeter);
-    return TSDB_CODE_OTHERS;
+    return TSDB_CODE_FAILED_TO_LOCK_RESOURCES;
   }
 
   code = mgmtCheckMeterGrant(pCreate, pMeter);
   if (code != 0) {
+    mError("table:%s, grant expired", pCreate->meterId);
     return code;
   }
 
@@ -614,21 +616,25 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
 
     if (pDb->vgStatus == TSDB_VG_STATUS_IN_PROGRESS) {
       mgmtDestroyMeter(pMeter);
+      //mTrace("table:%s, vgroup in creating progress", pCreate->meterId);
       return TSDB_CODE_ACTION_IN_PROGRESS;
     }
 
     if (pDb->vgStatus == TSDB_VG_STATUS_FULL) {
       mgmtDestroyMeter(pMeter);
+      mError("table:%s, vgroup is full", pCreate->meterId);
       return TSDB_CODE_NO_ENOUGH_DNODES;
     }
 
     if (pDb->vgStatus == TSDB_VG_STATUS_COMMITLOG_INIT_FAILED) {
       mgmtDestroyMeter(pMeter);
+      mError("table:%s, commit log init failed", pCreate->meterId);
       return TSDB_CODE_VG_COMMITLOG_INIT_FAILED;
     }
 
     if (pDb->vgStatus == TSDB_VG_STATUS_INIT_FAILED) {
       mgmtDestroyMeter(pMeter);
+      mError("table:%s, vgroup init failed", pCreate->meterId);
       return TSDB_CODE_VG_INIT_FAILED;
     }
 
@@ -636,12 +642,13 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
       pDb->vgStatus = TSDB_VG_STATUS_IN_PROGRESS;
       mgmtCreateVgroup(pDb);
       mgmtDestroyMeter(pMeter);
+      mTrace("table:%s, vgroup malloced, wait for create progress finished", pCreate->meterId);
       return TSDB_CODE_ACTION_IN_PROGRESS;
     }
 
     int sid = taosAllocateId(pVgroup->idPool);
     if (sid < 0) {
-      mWarn("db:%s, vgroup:%d, run out of ID, num:%d", pDb->name, pVgroup->vgId, taosIdPoolNumOfUsed(pVgroup->idPool));
+      mWarn("table:%s, vgroup:%d run out of ID, num:%d", pCreate->meterId, pVgroup->vgId, taosIdPoolNumOfUsed(pVgroup->idPool));
       pDb->vgStatus = TSDB_VG_STATUS_IN_PROGRESS;
       mgmtCreateVgroup(pDb);
       mgmtDestroyMeter(pMeter);
@@ -653,18 +660,21 @@ int mgmtCreateMeter(SDbObj *pDb, SCreateTableMsg *pCreate) {
     pMeter->uid = (((uint64_t)pMeter->gid.vgId) << 40) + ((((uint64_t)pMeter->gid.sid) & ((1ul << 24) - 1ul)) << 16) +
                   ((uint64_t)sdbVersion & ((1ul << 16) - 1ul));
 
-    mTrace("meter:%s, create meter in vgroup, vgId:%d, sid:%d, vnode:%d, uid:%d",
-           pMeter->meterId, pVgroup->vgId, sid, pVgroup->vnodeGid[0].vnode, pMeter->uid);
+    mTrace("table:%s, create table in vgroup, vgId:%d sid:%d vnode:%d uid:%llu db:%s",
+           pMeter->meterId, pVgroup->vgId, sid, pVgroup->vnodeGid[0].vnode, pMeter->uid, pDb->name);
   } else {
     pMeter->uid = (((uint64_t)pMeter->createdTime) << 16) + ((uint64_t)sdbVersion & ((1ul << 16) - 1ul));
   }
 
-  if (sdbInsertRow(meterSdb, pMeter, 0) < 0) return TSDB_CODE_SDB_ERROR;
+  if (sdbInsertRow(meterSdb, pMeter, 0) < 0) {
+    mError("table:%s, update sdb error", pCreate->meterId);
+    return TSDB_CODE_SDB_ERROR;
+  }
 
   // send create message to the selected vnode servers
   if (pCreate->numOfTags == 0) {
-    mTrace("meter:%s, send msg to dnode, vgId:%d, sid:%d, vnode:%d, dbname:%s",
-           pMeter->meterId, pMeter->gid.vgId, pMeter->gid.sid, pVgroup->vnodeGid[0].vnode, pDb->name);
+    mTrace("table:%s, send create table msg to dnode, vgId:%d, sid:%d, vnode:%d",
+           pMeter->meterId, pMeter->gid.vgId, pMeter->gid.sid, pVgroup->vnodeGid[0].vnode);
 
     grantAddTimeSeries(pMeter->numOfColumns - 1);
     mgmtSendCreateMsgToVgroup(pMeter, pVgroup);
@@ -884,7 +894,10 @@ void mgmtCleanUpMeters() { sdbCloseTable(meterSdb); }
 int mgmtGetMeterMeta(SMeterMeta *pMeta, SShowObj *pShow, SConnObj *pConn) {
   int cols = 0;
 
-  if (pConn->pDb == NULL) return TSDB_CODE_DB_NOT_SELECTED;
+  SDbObj *pDb = NULL;
+  if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
+  if (pDb == NULL) return TSDB_CODE_DB_NOT_SELECTED;
 
   SSchema *pSchema = tsGetSchema(pMeta);
 
@@ -919,7 +932,7 @@ int mgmtGetMeterMeta(SMeterMeta *pMeta, SShowObj *pShow, SConnObj *pConn) {
   for (int i = 1; i < cols; ++i) pShow->offset[i] = pShow->offset[i - 1] + pShow->bytes[i - 1];
 
   //  pShow->numOfRows = sdbGetNumOfRows (meterSdb);
-  pShow->numOfRows = pConn->pDb->numOfTables;
+  pShow->numOfRows = pDb->numOfTables;
   pShow->rowSize = pShow->offset[cols - 1] + pShow->bytes[cols - 1];
 
   return 0;
@@ -1211,8 +1224,12 @@ int mgmtRetrieveMeters(SShowObj *pShow, char *data, int rows, SConnObj *pConn) {
   int      numOfRead = 0;
   char     prefix[20] = {0};
 
-  if (pConn->pDb == NULL) return 0;
-  strcpy(prefix, pConn->pDb->name);
+  SDbObj *pDb = NULL;
+  if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
+  if (pDb == NULL) return 0;
+
+  strcpy(prefix, pDb->name);
   strcat(prefix, TS_PATH_DELIMITER);
   prefixLen = strlen(prefix);
 
@@ -1272,7 +1289,10 @@ int mgmtRetrieveMeters(SShowObj *pShow, char *data, int rows, SConnObj *pConn) {
 int mgmtGetMetricMeta(SMeterMeta *pMeta, SShowObj *pShow, SConnObj *pConn) {
   int cols = 0;
 
-  if (pConn->pDb == NULL) return TSDB_CODE_DB_NOT_SELECTED;
+  SDbObj *pDb = NULL;
+  if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
+  if (pDb == NULL) return TSDB_CODE_DB_NOT_SELECTED;
 
   SSchema *pSchema = tsGetSchema(pMeta);
 
@@ -1312,8 +1332,8 @@ int mgmtGetMetricMeta(SMeterMeta *pMeta, SShowObj *pShow, SConnObj *pConn) {
   pShow->offset[0] = 0;
   for (int i = 1; i < cols; ++i) pShow->offset[i] = pShow->offset[i - 1] + pShow->bytes[i - 1];
 
-  pShow->numOfRows = pConn->pDb->numOfMetrics;
-  pShow->pNode = pConn->pDb->pMetric;
+  pShow->numOfRows = pDb->numOfMetrics;
+  pShow->pNode = pDb->pMetric;
   pShow->rowSize = pShow->offset[cols - 1] + pShow->bytes[cols - 1];
 
   return 0;

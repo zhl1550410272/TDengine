@@ -61,7 +61,7 @@ typedef struct {
 
 MonitorConn *monitor = NULL;
 
-TAOS *taos_connect_a(char *ip, char *user, char *pass, char *db, int port, void (*fp)(void *, TAOS_RES *, int),
+TAOS *taos_connect_a(char *ip, char *user, char *pass, char *db, uint16_t port, void (*fp)(void *, TAOS_RES *, int),
                      void *param, void **taos);
 void monitorInitConn(void *para, void *unused);
 void monitorInitConnCb(void *param, TAOS_RES *result, int code);
@@ -95,6 +95,9 @@ int monitorInitSystem() {
 }
 
 int monitorStartSystem() {
+  if (monitor == NULL) {
+    monitorInitSystem();
+  }
   taosTmrReset(monitorInitConn, 10, NULL, tscTmr, &monitor->initTimer);
   return 0;
 }
@@ -243,9 +246,9 @@ void monitorStopSystem() {
   }
 
 #ifdef CLUSTER
-  monitorLPrint("dnode:%s is stopped", tsPrivateIp);
+  monitorLPrint("dnode:%s monitor module is stopped", tsPrivateIp);
 #else
-  monitorLPrint("dnode:%s is stopped", tsInternalIp);
+  monitorLPrint("dnode:%s monitor module is stopped", tsInternalIp);
 #endif
   monitor->state = MONITOR_STATE_STOPPED;
   taosLogFp = NULL;

@@ -13,13 +13,8 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <assert.h>
-#include <errno.h>
-#include <pthread.h>
-#include <sched.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include "os.h"
+#include <inttypes.h>
 #include "tlog.h"
 #include "tsched.h"
 #include "ttime.h"
@@ -105,15 +100,15 @@ static timer_map_t timerMap;
 static uintptr_t getNextTimerId() {
   uintptr_t id;
   do {
-    id = __sync_add_and_fetch_ptr(&nextTimerId, 1);
+    id = atomic_add_fetch_ptr(&nextTimerId, 1);
   } while (id == 0);
   return id;
 }
 
-static void timerAddRef(tmr_obj_t* timer) { __sync_add_and_fetch_8(&timer->refCount, 1); }
+static void timerAddRef(tmr_obj_t* timer) { atomic_add_fetch_8(&timer->refCount, 1); }
 
 static void timerDecRef(tmr_obj_t* timer) {
-  if (__sync_sub_and_fetch_8(&timer->refCount, 1) == 0) {
+  if (atomic_sub_fetch_8(&timer->refCount, 1) == 0) {
     free(timer);
   }
 }
@@ -121,7 +116,7 @@ static void timerDecRef(tmr_obj_t* timer) {
 static void lockTimerList(timer_list_t* list) {
   int64_t tid = taosGetPthreadId();
   int       i = 0;
-  while (__sync_val_compare_and_swap_64(&(list->lockedBy), 0, tid) != 0) {
+  while (atomic_val_compare_exchange_64(&(list->lockedBy), 0, tid) != 0) {
     if (++i % 1000 == 0) {
       sched_yield();
     }
@@ -130,7 +125,7 @@ static void lockTimerList(timer_list_t* list) {
 
 static void unlockTimerList(timer_list_t* list) {
   int64_t tid = taosGetPthreadId();
-  if (__sync_val_compare_and_swap_64(&(list->lockedBy), tid, 0) != tid) {
+  if (atomic_val_compare_exchange_64(&(list->lockedBy), tid, 0) != tid) {
     assert(false);
     tmrError("%d trying to unlock a timer list not locked by current thread.", tid);
   }
@@ -257,15 +252,15 @@ static bool removeFromWheel(tmr_obj_t* timer) {
 static void processExpiredTimer(void* handle, void* arg) {
   tmr_obj_t* timer = (tmr_obj_t*)handle;
   timer->executedBy = taosGetPthreadId();
-  uint8_t state = __sync_val_compare_and_swap_8(&timer->state, TIMER_STATE_WAITING, TIMER_STATE_EXPIRED);
+  uint8_t state = atomic_val_compare_exchange_8(&timer->state, TIMER_STATE_WAITING, TIMER_STATE_EXPIRED);
   if (state == TIMER_STATE_WAITING) {
-    const char* fmt = "%s timer[id=%lld, fp=%p, param=%p] execution start.";
+    const char* fmt = "%s timer[id=" PRIuPTR ", fp=%p, param=%p] execution start.";
     tmrTrace(fmt, timer->ctrl->label, timer->id, timer->fp, timer->param);
 
     (*timer->fp)(timer->param, (tmr_h)timer->id);
     atomic_store_8(&timer->state, TIMER_STATE_STOPPED);
 
-    fmt = "%s timer[id=%lld, fp=%p, param=%p] execution end.";
+    fmt = "%s timer[id=" PRIuPTR ", fp=%p, param=%p] execution end.";
     tmrTrace(fmt, timer->ctrl->label, timer->id, timer->fp, timer->param);
   }
   removeTimer(timer->id);
@@ -273,7 +268,7 @@ static void processExpiredTimer(void* handle, void* arg) {
 }
 
 static void addToExpired(tmr_obj_t* head) {
-  const char* fmt = "%s adding expired timer[id=%lld, fp=%p, param=%p] to queue.";
+  const char* fmt = "%s adding expired timer[id=" PRIuPTR ", fp=%p, param=%p] to queue.";
 
   while (head != NULL) {
     uintptr_t id = head->id;
@@ -287,7 +282,7 @@ static void addToExpired(tmr_obj_t* head) {
     schedMsg.thandle = NULL;
     taosScheduleTask(tmrQhandle, &schedMsg);
 
-    tmrTrace("timer[id=%lld] has been added to queue.", id);
+    tmrTrace("timer[id=" PRIuPTR "] has been added to queue.", id);
     head = next;
   }
 }
@@ -301,7 +296,7 @@ static uintptr_t doStartTimer(tmr_obj_t* timer, TAOS_TMR_CALLBACK fp, int msecon
   timer->ctrl = ctrl;
   addTimer(timer);
 
-  const char* fmt = "%s timer[id=%lld, fp=%p, param=%p] started";
+  const char* fmt = "%s timer[id=" PRIuPTR ", fp=%p, param=%p] started";
   tmrTrace(fmt, ctrl->label, timer->id, timer->fp, timer->param);
 
   if (mseconds == 0) {
@@ -386,40 +381,37 @@ static void taosTimerLoopFunc(int signo) {
 }
 
 static bool doStopTimer(tmr_obj_t* timer, uint8_t state) {
-  bool reusable = false;
-
   if (state == TIMER_STATE_WAITING) {
+    bool reusable = false;
     if (removeFromWheel(timer)) {
       removeTimer(timer->id);
       // only safe to reuse the timer when timer is removed from the wheel.
       // we cannot guarantee the thread safety of the timr in all other cases.
       reusable = true;
     }
-    const char* fmt = "%s timer[id=%lld, fp=%p, param=%p] is cancelled.";
+    const char* fmt = "%s timer[id=" PRIuPTR ", fp=%p, param=%p] is cancelled.";
     tmrTrace(fmt, timer->ctrl->label, timer->id, timer->fp, timer->param);
-  } else if (state != TIMER_STATE_EXPIRED) {
+    return reusable;
+  }
+  
+  if (state != TIMER_STATE_EXPIRED) {
     // timer already stopped or cancelled, has nothing to do in this case
-  } else if (timer->executedBy == taosGetPthreadId()) {
+    return false;
+  }
+  
+  if (timer->executedBy == taosGetPthreadId()) {
     // taosTmrReset is called in the timer callback, should do nothing in this
     // case to avoid dead lock. note taosTmrReset must be the last statement
     // of the callback funtion, will be a bug otherwise.
-  } else {
-    assert(timer->executedBy != taosGetPthreadId());
-
-    const char* fmt = "%s timer[id=%lld, fp=%p, param=%p] fired, waiting...";
-    tmrTrace(fmt, timer->ctrl->label, timer->id, timer->fp, timer->param);
-
-    for (int i = 1; atomic_load_8(&timer->state) != TIMER_STATE_STOPPED; i++) {
-      if (i % 1000 == 0) {
-        sched_yield();
-      }
-    }
-
-    fmt = "%s timer[id=%lld, fp=%p, param=%p] stopped.";
-    tmrTrace(fmt, timer->ctrl->label, timer->id, timer->fp, timer->param);
+    return false;
   }
-
-  return reusable;
+  
+  // timer callback is executing in another thread, we SHOULD wait it to stop,
+  // BUT this may result in dead lock if current thread are holding a lock which
+  // the timer callback need to acquire. so, we HAVE TO return directly.
+  const char* fmt = "%s timer[id=" PRIuPTR ", fp=%p, param=%p] is executing and cannot be stopped.";
+  tmrTrace(fmt, timer->ctrl->label, timer->id, timer->fp, timer->param);
+  return false;
 }
 
 bool taosTmrStop(tmr_h timerId) {
@@ -427,11 +419,11 @@ bool taosTmrStop(tmr_h timerId) {
 
   tmr_obj_t* timer = findTimer(id);
   if (timer == NULL) {
-    tmrTrace("timer[id=%lld] does not exist", id);
+    tmrTrace("timer[id=" PRIuPTR "] does not exist", id);
     return false;
   }
 
-  uint8_t state = __sync_val_compare_and_swap_8(&timer->state, TIMER_STATE_WAITING, TIMER_STATE_CANCELED);
+  uint8_t state = atomic_val_compare_exchange_8(&timer->state, TIMER_STATE_WAITING, TIMER_STATE_CANCELED);
   doStopTimer(timer, state);
   timerDecRef(timer);
 
@@ -454,9 +446,9 @@ bool taosTmrReset(TAOS_TMR_CALLBACK fp, int mseconds, void* param, void* handle,
   bool       stopped = false;
   tmr_obj_t* timer = findTimer(id);
   if (timer == NULL) {
-    tmrTrace("%s timer[id=%lld] does not exist", ctrl->label, id);
+    tmrTrace("%s timer[id=" PRIuPTR "] does not exist", ctrl->label, id);
   } else {
-    uint8_t state = __sync_val_compare_and_swap_8(&timer->state, TIMER_STATE_WAITING, TIMER_STATE_CANCELED);
+    uint8_t state = atomic_val_compare_exchange_8(&timer->state, TIMER_STATE_WAITING, TIMER_STATE_CANCELED);
     if (!doStopTimer(timer, state)) {
       timerDecRef(timer);
       timer = NULL;
@@ -469,7 +461,7 @@ bool taosTmrReset(TAOS_TMR_CALLBACK fp, int mseconds, void* param, void* handle,
     return stopped;
   }
 
-  tmrTrace("%s timer[id=%lld] is reused", ctrl->label, timer->id);
+  tmrTrace("%s timer[id=" PRIuPTR "] is reused", ctrl->label, timer->id);
 
   // wait until there's no other reference to this timer,
   // so that we can reuse this timer safely.
@@ -555,7 +547,9 @@ void* taosTmrInit(int maxNumOfTmrs, int resolution, int longest, const char* lab
 
 void taosTmrCleanUp(void* handle) {
   tmr_ctrl_t* ctrl = (tmr_ctrl_t*)handle;
-  assert(ctrl != NULL && ctrl->label[0] != 0);
+  if (ctrl == NULL || ctrl->label[0] == 0) {
+    return;
+  }
 
   tmrTrace("%s timer controller is cleaned up.", ctrl->label);
   ctrl->label[0] = 0;

@@ -24,11 +24,12 @@
 #include "tsclient.h"
 #include "tscompression.h"
 #include "tsocket.h"
-#include "tsql.h"
+#include "tscSQLParser.h"
 #include "ttimer.h"
 #include "tutil.h"
+#include "tnote.h"
 
-TAOS *taos_connect_imp(const char *ip, const char *user, const char *pass, const char *db, int port, void (*fp)(void *, TAOS_RES *, int),
+TAOS *taos_connect_imp(const char *ip, const char *user, const char *pass, const char *db, uint16_t port, void (*fp)(void *, TAOS_RES *, int),
                        void *param, void **taos) {
   STscObj *pObj;
 
@@ -63,10 +64,6 @@ TAOS *taos_connect_imp(const char *ip, const char *user, const char *pass, const
 
 #ifdef CLUSTER
   if (ip && ip[0]) {
-    tscMgmtIpList.numOfIps = 2;
-    strcpy(tscMgmtIpList.ipstr[0], ip);
-    tscMgmtIpList.ip[0] = inet_addr(ip);
-
     strcpy(tscMgmtIpList.ipstr[1], ip);
     tscMgmtIpList.ip[1] = inet_addr(ip);
   }
@@ -153,10 +150,10 @@ TAOS *taos_connect_imp(const char *ip, const char *user, const char *pass, const
   return pObj;
 }
 
-TAOS *taos_connect(const char *ip, const char *user, const char *pass, const char *db, int port) {
+TAOS *taos_connect(const char *ip, const char *user, const char *pass, const char *db, uint16_t port) {
   if (ip == NULL || (ip != NULL && (strcmp("127.0.0.1", ip) == 0 || strcasecmp("localhost", ip) == 0))) {
 #ifdef CLUSTER
-    ip = tsPrivateIp;
+    ip = tsMasterIp;
 #else
     ip = tsServerIpStr;
 #endif
@@ -205,7 +202,7 @@ TAOS *taos_connect(const char *ip, const char *user, const char *pass, const cha
   return taos;
 }
 
-TAOS *taos_connect_a(char *ip, char *user, char *pass, char *db, int port, void (*fp)(void *, TAOS_RES *, int),
+TAOS *taos_connect_a(char *ip, char *user, char *pass, char *db, uint16_t port, void (*fp)(void *, TAOS_RES *, int),
                      void *param, void **taos) {
 #ifndef CLUSTER
   if (ip == NULL) {
@@ -245,11 +242,16 @@ int taos_query_imp(STscObj* pObj, SSqlObj* pSql) {
   pRes->qhandle = 0;
   pSql->thandle = NULL;
 
-  if (pRes->code != TSDB_CODE_SUCCESS) return pRes->code;
+  if (pRes->code == TSDB_CODE_SUCCESS) {
+    tscDoQuery(pSql);
+  }
 
-  tscDoQuery(pSql);
-
-  tscTrace("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(pObj), pObj);
+  if (pRes->code == TSDB_CODE_SUCCESS) {
+    tscTrace("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(pObj), pObj);
+  } else {
+    tscError("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(pObj), pObj);
+  }
+  
   if (pRes->code != TSDB_CODE_SUCCESS) {
     tscFreeSqlObjPartial(pSql);
   }
@@ -269,16 +271,20 @@ int taos_query(TAOS *taos, const char *sqlstr) {
 
   size_t sqlLen = strlen(sqlstr);
   if (sqlLen > TSDB_MAX_SQL_LEN) {
-    tscError("%p sql too long", pSql);
-    pRes->code = TSDB_CODE_INVALID_SQL;
+    pRes->code = tscInvalidSQLErrMsg(pSql->cmd.payload, "sql too long", NULL);  // set the additional error msg for invalid sql
+    tscError("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(taos), pObj);
+    
     return pRes->code;
   }
+
+  taosNotePrintTsc(sqlstr);
 
   void *sql = realloc(pSql->sqlstr, sqlLen + 1);
   if (sql == NULL) {
     pRes->code = TSDB_CODE_CLI_OUT_OF_MEMORY;
-    tscError("%p failed to malloc sql string buffer", pSql);
-    tscTrace("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(taos), pObj);
+    tscError("%p failed to malloc sql string buffer, reason:%s", pSql, strerror(errno));
+  
+    tscError("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(taos), pObj);
     return pRes->code;
   }
 
@@ -647,11 +653,8 @@ int taos_fetch_block(TAOS_RES *res, TAOS_ROW *rows) {
     pCmd->limit.limit = pSql->cmd.globalLimit - pRes->numOfTotal;
     pCmd->limit.offset = pRes->offset;
 
-#ifdef CLUSTER
-    if ((++pSql->cmd.vnodeIdx) <= pMeterMetaInfo->pMetricMeta->numOfVnodes) {
-#else
+
     if ((++pSql->cmd.vnodeIdx) < pMeterMetaInfo->pMetricMeta->numOfVnodes) {
-#endif
       pSql->cmd.command = TSDB_SQL_SELECT;
       assert(pSql->fp == NULL);
       tscProcessSql(pSql);
@@ -781,9 +784,9 @@ int taos_errno(TAOS *taos) {
 }
 
 char *taos_errstr(TAOS *taos) {
-  STscObj *     pObj = (STscObj *)taos;
-  unsigned char code;
-  char          temp[256] = {0};
+  STscObj *pObj = (STscObj *)taos;
+  uint8_t  code;
+//  char          temp[256] = {0};
 
   if (pObj == NULL || pObj->signature != pObj) return tsError[globalCode];
 
@@ -792,9 +795,10 @@ char *taos_errstr(TAOS *taos) {
   else
     code = pObj->pSql->res.code;
 
+  // for invalid sql, additional information is attached to explain why the sql is invalid
   if (code == TSDB_CODE_INVALID_SQL) {
-    snprintf(temp, tListLen(temp), "invalid SQL: %s", pObj->pSql->cmd.payload);
-    strcpy(pObj->pSql->cmd.payload, temp);
+//    snprintf(temp, tListLen(temp), "invalid SQL: %s", pObj->pSql->cmd.payload);
+//    strcpy(pObj->pSql->cmd.payload, temp);
     return pObj->pSql->cmd.payload;
   } else {
     return tsError[code];

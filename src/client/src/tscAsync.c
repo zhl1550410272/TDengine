@@ -22,8 +22,9 @@
 #include "tscUtil.h"
 #include "tsclient.h"
 #include "tsocket.h"
-#include "tsql.h"
+#include "tscSQLParser.h"
 #include "tutil.h"
+#include "tnote.h"
 
 void tscProcessFetchRow(SSchedMsg *pMsg);
 void tscProcessAsyncRetrieve(void *param, TAOS_RES *tres, int numOfRows);
@@ -39,6 +40,7 @@ static void tscProcessAsyncRetrieveImpl(void *param, TAOS_RES *tres, int numOfRo
  */
 static void tscProcessAsyncFetchRowsProxy(void *param, TAOS_RES *tres, int numOfRows);
 
+// TODO return the correct error code to client in tscQueueAsyncError
 void taos_query_a(TAOS *taos, const char *sqlstr, void (*fp)(void *, TAOS_RES *, int), void *param) {
   STscObj *pObj = (STscObj *)taos;
   if (pObj == NULL || pObj->signature != pObj) {
@@ -55,14 +57,15 @@ void taos_query_a(TAOS *taos, const char *sqlstr, void (*fp)(void *, TAOS_RES *,
     return;
   }
 
-  SSqlObj *pSql = (SSqlObj *)malloc(sizeof(SSqlObj));
+  taosNotePrintTsc(sqlstr);
+
+  SSqlObj *pSql = (SSqlObj *)calloc(1, sizeof(SSqlObj));
   if (pSql == NULL) {
     tscError("failed to malloc sqlObj");
     tscQueueAsyncError(fp, param);
     return;
   }
 
-  memset(pSql, 0, sizeof(SSqlObj));
   SSqlCmd *pCmd = &pSql->cmd;
   SSqlRes *pRes = &pSql->res;
 

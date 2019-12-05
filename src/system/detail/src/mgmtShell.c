@@ -14,13 +14,14 @@
  */
 
 #define _DEFAULT_SOURCE
-#include <arpa/inet.h>
+#include "os.h"
 
 #include "dnodeSystem.h"
 #include "mgmt.h"
 #include "mgmtProfile.h"
 #include "taosmsg.h"
 #include "tlog.h"
+#include "tstatus.h"
 
 #pragma GCC diagnostic push
 
@@ -189,8 +190,11 @@ int mgmtProcessMeterMetaMsg(char *pMsg, int msgLen, SConnObj *pConn) {
   int size = sizeof(STaosHeader) + sizeof(STaosRsp) + sizeof(SMeterMeta) + sizeof(SSchema) * TSDB_MAX_COLUMNS +
              sizeof(SSchema) * TSDB_MAX_TAGS + TSDB_MAX_TAGS_LEN + TSDB_EXTRA_PAYLOAD_SIZE;
 
+  SDbObj *pDb = NULL;
+  if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
   // todo db check should be extracted
-  if (pConn->pDb == NULL || (pConn->pDb != NULL && pConn->pDb->dropStatus != TSDB_DB_STATUS_READY)) {
+  if (pDb == NULL || (pDb != NULL && pDb->dropStatus != TSDB_DB_STATUS_READY)) {
 
     if ((pStart = mgmtAllocMsg(pConn, size, &pMsg, &pRsp)) == NULL) {
       taosSendSimpleRsp(pConn->thandle, TSDB_MSG_TYPE_METERINFO_RSP, TSDB_CODE_SERV_OUT_OF_MEMORY);
@@ -223,10 +227,10 @@ int mgmtProcessMeterMetaMsg(char *pMsg, int msgLen, SConnObj *pConn) {
 
     SDbObj* pMeterDb = mgmtGetDbByMeterId(pCreateMsg->meterId);
     mTrace("meter:%s, pConnDb:%p, pConnDbName:%s, pMeterDb:%p, pMeterDbName:%s",
-           pCreateMsg->meterId, pConn->pDb, pConn->pDb->name, pMeterDb, pMeterDb->name);
-    assert(pConn->pDb == pMeterDb);
+           pCreateMsg->meterId, pDb, pDb->name, pMeterDb, pMeterDb->name);
+    assert(pDb == pMeterDb);
 
-    int32_t code = mgmtCreateMeter(pConn->pDb, pCreateMsg);
+    int32_t code = mgmtCreateMeter(pDb, pCreateMsg);
 
     char stableName[TSDB_METER_ID_LEN] = {0};
     strncpy(stableName, pInfo->tags, TSDB_METER_ID_LEN);
@@ -256,7 +260,7 @@ int mgmtProcessMeterMetaMsg(char *pMsg, int msgLen, SConnObj *pConn) {
   }
 
   if (pMeterObj == NULL) {
-    if (pConn->pDb)
+    if (pDb)
       pRsp->code = TSDB_CODE_INVALID_TABLE;
     else
       pRsp->code = TSDB_CODE_DB_NOT_SELECTED;
@@ -274,7 +278,7 @@ int mgmtProcessMeterMetaMsg(char *pMsg, int msgLen, SConnObj *pConn) {
     pMeta->vgid = htonl(pMeterObj->gid.vgId);
     pMeta->sversion = htons(pMeterObj->sversion);
 
-    pMeta->precision = pConn->pDb->cfg.precision;
+    pMeta->precision = pDb->cfg.precision;
 
     pMeta->numOfTags = pMeterObj->numOfTags;
     pMeta->numOfColumns = htons(pMeterObj->numOfColumns);
@@ -505,7 +509,10 @@ int mgmtProcessMetricMetaMsg(char *pMsg, int msgLen, SConnObj *pConn) {
   SMetricMetaElemMsg *pElem = (SMetricMetaElemMsg *)(((char *)pMetricMetaMsg) + pMetricMetaMsg->metaElem[0]);
   pMetric = mgmtGetMeter(pElem->meterId);
 
-  if (pMetric == NULL || (pConn->pDb != NULL && pConn->pDb->dropStatus != TSDB_DB_STATUS_READY)) {
+  SDbObj *pDb = NULL;
+  if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
+  if (pMetric == NULL || (pDb != NULL && pDb->dropStatus != TSDB_DB_STATUS_READY)) {
     pStart = taosBuildRspMsg(pConn->thandle, TSDB_MSG_TYPE_METRIC_META_RSP);
     if (pStart == NULL) {
       taosSendSimpleRsp(pConn->thandle, TSDB_MSG_TYPE_METRIC_META_RSP, TSDB_CODE_SERV_OUT_OF_MEMORY);
@@ -514,7 +521,7 @@ int mgmtProcessMetricMetaMsg(char *pMsg, int msgLen, SConnObj *pConn) {
 
     pMsg = pStart;
     pRsp = (STaosRsp *)pMsg;
-    if (pConn->pDb)
+    if (pDb)
       pRsp->code = TSDB_CODE_INVALID_TABLE;
     else
       pRsp->code = TSDB_CODE_DB_NOT_SELECTED;
@@ -781,12 +788,14 @@ int (*mgmtGetMetaFp[])(SMeterMeta *pMeta, SShowObj *pShow, SConnObj *pConn) = {
     mgmtGetAcctMeta,   mgmtGetUserMeta,   mgmtGetDbMeta,     mgmtGetMeterMeta,  mgmtGetDnodeMeta,
     mgmtGetMnodeMeta,  mgmtGetVgroupMeta, mgmtGetMetricMeta, mgmtGetModuleMeta, mgmtGetQueryMeta,
     mgmtGetStreamMeta, mgmtGetConfigMeta, mgmtGetConnsMeta,  mgmtGetScoresMeta, grantGetGrantsMeta,
+    mgmtGetVnodeMeta,
 };
 
 int (*mgmtRetrieveFp[])(SShowObj *pShow, char *data, int rows, SConnObj *pConn) = {
     mgmtRetrieveAccts,   mgmtRetrieveUsers,   mgmtRetrieveDbs,     mgmtRetrieveMeters,  mgmtRetrieveDnodes,
     mgmtRetrieveMnodes,  mgmtRetrieveVgroups, mgmtRetrieveMetrics, mgmtRetrieveModules, mgmtRetrieveQueries,
     mgmtRetrieveStreams, mgmtRetrieveConfigs, mgmtRetrieveConns,   mgmtRetrieveScores,  grantRetrieveGrants,
+    mgmtRetrieveVnodes,
 };
 
 int mgmtProcessShowMsg(char *pMsg, int msgLen, SConnObj *pConn) {
@@ -873,7 +882,7 @@ int mgmtProcessRetrieveMsg(char *pMsg, int msgLen, SConnObj *pConn) {
     taosSendSimpleRsp(pConn->thandle, TSDB_MSG_TYPE_RETRIEVE_RSP, TSDB_CODE_MEMORY_CORRUPTED);
     return -1;
   } else {
-    if ((pRetrieve->free & TSDB_QUERY_TYPE_FREE_RESOURCE) == 0) {
+    if ((pRetrieve->free & TSDB_QUERY_TYPE_FREE_RESOURCE) != TSDB_QUERY_TYPE_FREE_RESOURCE) {
       rowsToRead = pShow->numOfRows - pShow->numOfReads;
     }
 
@@ -905,7 +914,7 @@ int mgmtProcessRetrieveMsg(char *pMsg, int msgLen, SConnObj *pConn) {
     pMsg = pRsp->data;
 
     // if free flag is set, client wants to clean the resources
-    if ((pRetrieve->free & TSDB_QUERY_TYPE_FREE_RESOURCE) == 0)
+    if ((pRetrieve->free & TSDB_QUERY_TYPE_FREE_RESOURCE) != TSDB_QUERY_TYPE_FREE_RESOURCE)
       rowsRead = (*mgmtRetrieveFp[pShow->type])(pShow, pRsp->data, rowsToRead, pConn);
 
     if (rowsRead < 0) {
@@ -922,8 +931,8 @@ int mgmtProcessRetrieveMsg(char *pMsg, int msgLen, SConnObj *pConn) {
   taosSendMsgToPeer(pConn->thandle, pStart, msgLen);
 
   if (rowsToRead == 0) {
-    int64_t oldSign = __sync_val_compare_and_swap(&pShow->signature, (uint64_t)pShow, 0);
-    if (oldSign != (uint64_t)pShow) {
+    uintptr_t oldSign = atomic_val_compare_exchange_ptr(&pShow->signature, pShow, 0);
+    if (oldSign != (uintptr_t)pShow) {
       return msgLen;
     }
     // pShow->signature = 0;
@@ -957,15 +966,24 @@ int mgmtProcessCreateTableMsg(char *pMsg, int msgLen, SConnObj *pConn) {
       pSchema++;
     }
 
-    if (pConn->pDb) {
-      code = mgmtCreateMeter(pConn->pDb, pCreate);
-      if (code == 0) {
-        mTrace("meter:%s is created by %s", pCreate->meterId, pConn->pUser->user);
-        // mLPrint("meter:%s is created by %s", pCreate->meterId, pConn->pUser->user);
-      }
+    SDbObj *pDb = NULL;
+    if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
+    if (pDb) {
+      code = mgmtCreateMeter(pDb, pCreate);
     } else {
       code = TSDB_CODE_DB_NOT_SELECTED;
     }
+  }
+
+  if (code == 1) {
+    //mTrace("table:%s, wait vgroup create finish", pCreate->meterId, code);
+  }
+  else if (code != 0) {
+    mError("table:%s, failed to create table, code:%d", pCreate->meterId, code);
+  } else {
+    mTrace("table:%s, table is created by %s", pCreate->meterId, pConn->pUser->user);
+    //mLPrint("meter:%s is created by %s", pCreate->meterId, pConn->pUser->user);
   }
 
   taosSendSimpleRsp(pConn->thandle, TSDB_MSG_TYPE_CREATE_TABLE_RSP, code);
@@ -984,7 +1002,10 @@ int mgmtProcessDropTableMsg(char *pMsg, int msgLen, SConnObj *pConn) {
   if (!pConn->writeAuth) {
     code = TSDB_CODE_NO_RIGHTS;
   } else {
-    code = mgmtDropMeter(pConn->pDb, pDrop->meterId, pDrop->igNotExists);
+    SDbObj *pDb = NULL;
+    if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
+    code = mgmtDropMeter(pDb, pDrop->meterId, pDrop->igNotExists);
     if (code == 0) {
       mTrace("meter:%s is dropped by user:%s", pDrop->meterId, pConn->pUser->user);
       // mLPrint("meter:%s is dropped by user:%s", pDrop->meterId, pConn->pUser->user);
@@ -1014,12 +1035,15 @@ int mgmtProcessAlterTableMsg(char *pMsg, int msgLen, SConnObj *pConn) {
       mError("meter:%s error numOfCols:%d in alter table", pAlter->meterId, pAlter->numOfCols);
       code = TSDB_CODE_APP_ERROR;
     } else {
-      if (pConn->pDb) {
+      SDbObj *pDb = NULL;
+      if (pConn->pDb != NULL) pDb = mgmtGetDb(pConn->pDb->name);
+
+      if (pDb) {
         for (int32_t i = 0; i < pAlter->numOfCols; ++i) {
           pAlter->schema[i].bytes = htons(pAlter->schema[i].bytes);
         }
 
-        code = mgmtAlterMeter(pConn->pDb, pAlter);
+        code = mgmtAlterMeter(pDb, pAlter);
         if (code == 0) {
           mLPrint("meter:%s is altered by %s", pAlter->meterId, pConn->pUser->user);
         }
@@ -1093,8 +1117,8 @@ int mgmtProcessHeartBeatMsg(char *cont, int contLen, SConnObj *pConn) {
 }
 
 void mgmtEstablishConn(SConnObj *pConn) {
-  __sync_fetch_and_add(&mgmtShellConns, 1);
-  __sync_fetch_and_add(&sdbExtConns, 1);
+  atomic_fetch_add_32(&mgmtShellConns, 1);
+  atomic_fetch_add_32(&sdbExtConns, 1);
   pConn->stime = taosGetTimestampMs();
 
   if (strcmp(pConn->pUser->user, "root") == 0 || strcmp(pConn->pUser->user, pConn->pAcct->user) == 0) {
@@ -1168,8 +1192,8 @@ int mgmtProcessConnectMsg(char *pMsg, int msgLen, SConnObj *pConn) {
 
   if (pConn->pAcct) {
     mgmtRemoveConnFromAcct(pConn);
-    __sync_fetch_and_sub(&mgmtShellConns, 1);
-    __sync_fetch_and_sub(&sdbExtConns, 1);
+    atomic_fetch_sub_32(&mgmtShellConns, 1);
+    atomic_fetch_sub_32(&sdbExtConns, 1);
   }
 
   code = 0;
@@ -1227,8 +1251,8 @@ void *mgmtProcessMsgFromShell(char *msg, void *ahandle, void *thandle) {
   if (msg == NULL) {
     if (pConn) {
       mgmtRemoveConnFromAcct(pConn);
-      __sync_fetch_and_sub(&mgmtShellConns, 1);
-      __sync_fetch_and_sub(&sdbExtConns, 1);
+      atomic_fetch_sub_32(&mgmtShellConns, 1);
+      atomic_fetch_sub_32(&sdbExtConns, 1);
       mTrace("connection from %s is closed", pConn->pUser->user);
       memset(pConn, 0, sizeof(SConnObj));
     }
@@ -1258,13 +1282,12 @@ void *mgmtProcessMsgFromShell(char *msg, void *ahandle, void *thandle) {
       if (pConn->pUser) {
         pConn->pAcct = mgmtGetAcct(pConn->pUser->acct);
         mgmtEstablishConn(pConn);
-        mTrace("login from:%x:%d", pConn->ip, htons(pConn->port));
+        mTrace("login from:%x:%hu", pConn->ip, htons(pConn->port));
       }
     }
 
     if (pConn->pAcct) {
-      if (pConn->pDb == NULL ||
-          strncmp(pConn->pDb->name, pHead->db, tListLen(pConn->pDb->name)) != 0) {
+      if (pConn->pDb == NULL || strncmp(pConn->pDb->name, pHead->db, tListLen(pConn->pDb->name)) != 0) {
         pConn->pDb = mgmtGetDb(pHead->db);
       }
 

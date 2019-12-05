@@ -58,12 +58,12 @@ int64_t tsMsPerDay[] = {86400000L, 86400000000L};
 
 char  tsMasterIp[TSDB_IPv4ADDR_LEN] = {0};
 char  tsSecondIp[TSDB_IPv4ADDR_LEN] = {0};
-short tsMgmtShellPort = 6030;   // udp[6030-6034] tcp[6030]
-short tsVnodeShellPort = 6035;  // udp[6035-6039] tcp[6035]
-short tsMgmtVnodePort = 6040;   // udp[6040-6044] tcp[6040]
-short tsVnodeVnodePort = 6045;  // tcp[6045]
-short tsMgmtMgmtPort = 6050;    // sdbPeerPort only udp, numOfVnodes fixed to 1, range udp[6050]
-short tsMgmtSyncPort = 6050;    // sdbSyncPort only tcp, range tcp[6050]
+uint16_t tsMgmtShellPort = 6030;   // udp[6030-6034] tcp[6030]
+uint16_t tsVnodeShellPort = 6035;  // udp[6035-6039] tcp[6035]
+uint16_t tsMgmtVnodePort = 6040;   // udp[6040-6044] tcp[6040]
+uint16_t tsVnodeVnodePort = 6045;  // tcp[6045]
+uint16_t tsMgmtMgmtPort = 6050;    // udp, numOfVnodes fixed to 1, range udp[6050]
+uint16_t tsMgmtSyncPort = 6050;    // tcp, range tcp[6050]
 
 int tsStatusInterval = 1;         // second
 int tsShellActivityTimer = 3;     // second
@@ -77,14 +77,14 @@ float tsRatioOfQueryThreads = 0.5;
 char  tsPublicIp[TSDB_IPv4ADDR_LEN] = {0};
 char  tsInternalIp[TSDB_IPv4ADDR_LEN] = {0};
 char  tsPrivateIp[TSDB_IPv4ADDR_LEN] = {0};
-char  tsServerIpStr[TSDB_IPv4ADDR_LEN] = "0.0.0.0";
+char  tsServerIpStr[TSDB_IPv4ADDR_LEN] = "127.0.0.1";
 short tsNumOfVnodesPerCore = 8;
 short tsNumOfTotalVnodes = 0;
 short tsCheckHeaderFile = 0;
 
 int tsSessionsPerVnode = 1000;
 int tsCacheBlockSize = 16384;  // 256 columns
-int tsAverageCacheBlocks = 4;
+int tsAverageCacheBlocks = TSDB_DEFAULT_AVG_BLOCKS;
 
 int   tsRowsInFileBlock = 4096;
 float tsFileBlockMinPercent = 0.05;
@@ -92,10 +92,10 @@ float tsFileBlockMinPercent = 0.05;
 short tsNumOfBlocksPerMeter = 100;
 short tsCommitTime = 3600;  // seconds
 short tsCommitLog = 1;
-short tsCompression = 2;
+short tsCompression = TSDB_MAX_COMPRESSION_LEVEL;
 short tsDaysPerFile = 10;
 int   tsDaysToKeep = 3650;
-int   tsReplications = 1;
+int   tsReplications = TSDB_REPLICA_MIN_NUM;
 
 int  tsNumOfMPeers = 3;
 int  tsMaxShellConns = 2000;
@@ -152,8 +152,8 @@ int     tsProjectExecInterval = 10000;   // every 10sec, the projection will be 
 int64_t tsMaxRetentWindow = 24 * 3600L;  // maximum time window tolerance
 
 char  tsHttpIp[TSDB_IPv4ADDR_LEN] = "0.0.0.0";
-short tsHttpPort = 6020;                 // only tcp, range tcp[6020]
-// short tsNginxPort = 6060;             //only tcp, range tcp[6060]
+uint16_t tsHttpPort = 6020;                 // only tcp, range tcp[6020]
+// uint16_t tsNginxPort = 6060;             //only tcp, range tcp[6060]
 int tsHttpCacheSessions = 100;
 int tsHttpSessionExpire = 36000;
 int tsHttpMaxThreads = 2;
@@ -161,6 +161,9 @@ int tsHttpEnableCompress = 0;
 int tsHttpEnableRecordSql = 0;
 int tsTelegrafUseFieldNum = 0;
 int tsAdminRowLimit = 10240;
+
+int   tsTscEnableRecordSql = 0;
+int   tsEnableCoreFile = 0;
 
 int tsRpcTimer = 300;
 int tsRpcMaxTime = 600;      // seconds;
@@ -364,7 +367,7 @@ void tsReadLogOption(char *option, char *value) {
   }
 }
 
-SGlobalConfig *tsGetConfigOption(char *option) {
+SGlobalConfig *tsGetConfigOption(const char *option) {
   tsInitGlobalConfig();
   for (int i = 0; i < tsGlobalConfigNum; ++i) {
     SGlobalConfig *cfg = tsGlobalConfig + i;
@@ -374,7 +377,7 @@ SGlobalConfig *tsGetConfigOption(char *option) {
   return NULL;
 }
 
-void tsReadConfigOption(char *option, char *value) {
+void tsReadConfigOption(const char *option, char *value) {
   for (int i = 0; i < tsGlobalConfigNum; ++i) {
     SGlobalConfig *cfg = tsGlobalConfig + i;
     if (!(cfg->cfgType & TSDB_CFG_CTYPE_B_CONFIG)) continue;
@@ -423,9 +426,7 @@ void tsInitConfigOption(SGlobalConfig *cfg, char *name, void *ptr, int8_t valTyp
   cfg->cfgStatus = TSDB_CFG_CSTATUS_NONE;
 }
 
-void tsInitGlobalConfig() {
-  if (tsGlobalConfig != NULL) return;
-
+static void doInitGlobalConfig() {
   tsGlobalConfig = (SGlobalConfig *) malloc(sizeof(SGlobalConfig) * TSDB_CFG_MAX_NUM);
   memset(tsGlobalConfig, 0, sizeof(SGlobalConfig) * TSDB_CFG_MAX_NUM);
 
@@ -509,7 +510,7 @@ void tsInitGlobalConfig() {
                      0, TSDB_MAX_VNODES, 0, TSDB_CFG_UTYPE_NONE);
   tsInitConfigOption(cfg++, "tables", &tsSessionsPerVnode, TSDB_CFG_VTYPE_INT,
                      TSDB_CFG_CTYPE_B_CONFIG | TSDB_CFG_CTYPE_B_SHOW,
-                     4, 220000, 0, TSDB_CFG_UTYPE_NONE);
+                     TSDB_MIN_TABLES_PER_VNODE, TSDB_MAX_TABLES_PER_VNODE, 0, TSDB_CFG_UTYPE_NONE);
   tsInitConfigOption(cfg++, "cache", &tsCacheBlockSize, TSDB_CFG_VTYPE_INT,
                      TSDB_CFG_CTYPE_B_CONFIG | TSDB_CFG_CTYPE_B_SHOW,
                      100, 1048576, 0, TSDB_CFG_UTYPE_BYTE);
@@ -521,7 +522,7 @@ void tsInitGlobalConfig() {
                      0, 1.0, 0, TSDB_CFG_UTYPE_NONE);
   tsInitConfigOption(cfg++, "ablocks", &tsAverageCacheBlocks, TSDB_CFG_VTYPE_INT,
                      TSDB_CFG_CTYPE_B_CONFIG | TSDB_CFG_CTYPE_B_SHOW,
-                     2, 128, 0, TSDB_CFG_UTYPE_NONE);
+                     TSDB_MIN_AVG_BLOCKS, TSDB_MAX_AVG_BLOCKS, 0, TSDB_CFG_UTYPE_NONE);
   tsInitConfigOption(cfg++, "tblocks", &tsNumOfBlocksPerMeter, TSDB_CFG_VTYPE_SHORT,
                      TSDB_CFG_CTYPE_B_CONFIG | TSDB_CFG_CTYPE_B_SHOW,
                      32, 4096, 0, TSDB_CFG_UTYPE_NONE);
@@ -643,6 +644,7 @@ void tsInitGlobalConfig() {
   tsInitConfigOption(cfg++, "defaultPass", tsDefaultPass, TSDB_CFG_VTYPE_STRING,
                      TSDB_CFG_CTYPE_B_CONFIG | TSDB_CFG_CTYPE_B_CLIENT | TSDB_CFG_CTYPE_B_NOT_PRINT,
                      0, 0, TSDB_PASSWORD_LEN, TSDB_CFG_UTYPE_NONE);
+  
   // socket type, udp by default
   tsInitConfigOption(cfg++, "sockettype", tsSocketType, TSDB_CFG_VTYPE_STRING,
                      TSDB_CFG_CTYPE_B_CONFIG | TSDB_CFG_CTYPE_B_CLIENT | TSDB_CFG_CTYPE_B_SHOW,
@@ -769,6 +771,14 @@ void tsInitGlobalConfig() {
                      0, 255, 0,
                      TSDB_CFG_UTYPE_NONE);
 
+  tsInitConfigOption(cfg++, "tscEnableRecordSql", &tsTscEnableRecordSql, TSDB_CFG_VTYPE_INT,
+                     TSDB_CFG_CTYPE_B_CONFIG,
+                     1, 100000, 0, TSDB_CFG_UTYPE_NONE);
+
+  tsInitConfigOption(cfg++, "enableCoreFile", &tsEnableCoreFile, TSDB_CFG_VTYPE_INT,
+                     TSDB_CFG_CTYPE_B_CONFIG,
+                     1, 100000, 0, TSDB_CFG_UTYPE_NONE);
+                     
   // version info
   tsInitConfigOption(cfg++, "gitinfo", gitinfo, TSDB_CFG_VTYPE_STRING,
                      TSDB_CFG_CTYPE_B_SHOW | TSDB_CFG_CTYPE_B_CLIENT,
@@ -781,6 +791,12 @@ void tsInitGlobalConfig() {
                      0, 0, 0, TSDB_CFG_UTYPE_NONE);
 
   tsGlobalConfigNum = (int)(cfg - tsGlobalConfig);
+  assert(tsGlobalConfigNum <= TSDB_CFG_MAX_NUM);
+}
+
+static pthread_once_t initGlobalConfig = PTHREAD_ONCE_INIT;
+void tsInitGlobalConfig() {
+  pthread_once(&initGlobalConfig, doInitGlobalConfig);
 }
 
 void tsReadGlobalLogConfig() {

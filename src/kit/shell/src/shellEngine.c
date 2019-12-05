@@ -16,21 +16,12 @@
 #define _XOPEN_SOURCE
 #define _DEFAULT_SOURCE
 
-#include <assert.h>
-#include <pthread.h>
-#include <regex.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <time.h>
-
 #include "os.h"
 #include "shell.h"
 #include "shellCommand.h"
 #include "ttime.h"
 #include "tutil.h"
+#include <regex.h>
 
 /**************** Global variables ****************/
 #ifdef WINDOWS
@@ -44,6 +35,7 @@ char      SERVER_VERSION[] = "server version:%s\nCopyright (c) 2017 by PowerDb, 
 char      PROMPT_HEADER[] = "power> ";
 char      CONTINUE_PROMPT[] = "    -> ";
 int       prompt_size = 7;
+
 TAOS_RES *result = NULL;
 History   history;
 
@@ -846,7 +838,7 @@ void shellGetGrantInfo(void *con) {
     TAOS_FIELD *fields = taos_fetch_fields(result);
     TAOS_ROW row = taos_fetch_row(result);
     if (row == NULL) {
-      fprintf(stderr, "\nGrant information is empty.\n");
+      fprintf(stderr, "\nFailed to get grant information from server. Abort.\n");
       exit(0);
     }
 

@@ -24,8 +24,7 @@ fi
 mkdir -p ${pkg_dir}
 cd ${pkg_dir}
 
-versioninfo=$(${script_dir}/../tools/get_version.sh ${script_dir}/../../src/util/src/version.c)
-libfile="libtaos.so.${versioninfo}"
+libfile="libtaos.so.${tdengine_ver}"
 
 # create install dir 
 install_home_path="/usr/local/taos"
@@ -49,6 +48,7 @@ cp ${compile_dir}/build/bin/taosd                   ${pkg_dir}${install_home_pat
 cp ${compile_dir}/build/bin/taos                    ${pkg_dir}${install_home_path}/bin
 cp ${compile_dir}/build/lib/${libfile}              ${pkg_dir}${install_home_path}/driver 
 cp ${compile_dir}/../src/inc/taos.h                 ${pkg_dir}${install_home_path}/include
+cp ${compile_dir}/../src/inc/taoserror.h            ${pkg_dir}${install_home_path}/include
 cp -r ${top_dir}/tests/examples/*                   ${pkg_dir}${install_home_path}/examples
 cp -r ${top_dir}/src/connector/grafana              ${pkg_dir}${install_home_path}/connector
 cp -r ${top_dir}/src/connector/python               ${pkg_dir}${install_home_path}/connector
@@ -63,7 +63,7 @@ debver="Version: "$tdengine_ver
 sed -i "2c$debver" ${pkg_dir}/DEBIAN/control
  
 #get taos version, then set deb name
-debname="tdengine-"${tdengine_ver}".deb"
+debname="TDengine-"${tdengine_ver}".deb"
 
 # make deb package
 dpkg -b ${pkg_dir} $debname

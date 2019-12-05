@@ -14,20 +14,8 @@
  */
 
 #define _DEFAULT_SOURCE
-#include <errno.h>
-#include <fcntl.h>
-#include <locale.h>
-#include <pthread.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <syslog.h>
-#include <unistd.h>
-#include <unistd.h>
-#include <wordexp.h>
+
+#include "os.h"
 
 #include "dnodeSystem.h"
 #include "tglobalcfg.h"
@@ -67,12 +55,31 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
       }
     } else if (strcmp(argv[i], "-V") == 0) {
-      printf("version: %s compatible_version: %s\n", version, compatible_version);
+      #ifdef CLUSTER
+        printf("enterprise version: %s compatible_version: %s\n", version, compatible_version);
+      #else
+        printf("community version: %s compatible_version: %s\n", version, compatible_version);
+      #endif
+      
       printf("gitinfo: %s\n", gitinfo);
       printf("buildinfo: %s\n", buildinfo);
       return 0;
     } else if (strcmp(argv[i], "-k") == 0) {
       dnodeParseParameterK();
+#ifdef TAOS_MEM_CHECK
+    } else if (strcmp(argv[i], "--alloc-random-fail") == 0) {
+      if ((i < argc - 1) && (argv[i+1][0] != '-')) {
+        taosSetAllocMode(TAOS_ALLOC_MODE_RANDOM_FAIL, argv[++i], true);
+      } else {
+        taosSetAllocMode(TAOS_ALLOC_MODE_RANDOM_FAIL, NULL, true);
+      }
+    } else if (strcmp(argv[i], "--detect-mem-leak") == 0) {
+      if ((i < argc - 1) && (argv[i+1][0] != '-')) {
+        taosSetAllocMode(TAOS_ALLOC_MODE_DETECT_LEAK, argv[++i], true);
+      } else {
+        taosSetAllocMode(TAOS_ALLOC_MODE_DETECT_LEAK, NULL, true);
+      }
+#endif
     }
   }
 

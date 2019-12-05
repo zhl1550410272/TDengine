@@ -13,19 +13,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <libgen.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include "os.h"
 
 #include "sdb.h"
 #include "sdbint.h"
@@ -36,7 +24,12 @@
 extern char   version[];
 const int16_t sdbFileVersion = 0;
 int           sdbExtConns = 0;
+
+#ifdef CLUSTER
+int           sdbMaster = 0;
+#else
 int           sdbMaster = 1;
+#endif
 
 void *(*sdbInitIndexFp[])(int maxRows, int dataSize) = {sdbOpenStrHash, sdbOpenIntHash, sdbOpenIntHash};
 
@@ -110,7 +103,7 @@ int sdbOpenSdbFile(SSdbTable *pTable) {
     pTable->header.swVersion = swVersion.iversion;
     pTable->header.sdbFileVersion = sdbFileVersion;
     if (taosCalcChecksumAppend(0, (uint8_t *)(&pTable->header), size) < 0) {
-      sdbError("failed to get file header checksum, file: %s", pTable->fn);
+      sdbError("failed to get file header checksum, file:%s", pTable->fn);
       tclose(pTable->fd);
       return -1;
     }
@@ -132,17 +125,17 @@ int sdbOpenSdbFile(SSdbTable *pTable) {
 
     ssize_t tsize = read(pTable->fd, &(pTable->header), size);
     if (tsize < size) {
-      sdbError("failed to read sdb file header, file: %s", pTable->fn);
+      sdbError("failed to read sdb file header, file:%s", pTable->fn);
       tclose(pTable->fd);
       return -1;
     }
 
     if (pTable->header.swVersion != swVersion.iversion) {
-      sdbWarn("sdb file %s version not match software version", pTable->fn);
+      sdbWarn("sdb file:%s version not match software version", pTable->fn);
     }
 
     if (!taosCheckChecksumWhole((uint8_t *)(&pTable->header), size)) {
-      sdbError("sdb file header is broken since checksum mismatch, file: %s", pTable->fn);
+      sdbError("sdb file header is broken since checksum mismatch, file:%s", pTable->fn);
       tclose(pTable->fd);
       return -1;
     }
@@ -185,9 +178,11 @@ int sdbInitTableByFile(SSdbTable *pTable) {
   total_size = sizeof(SRowHead) + pTable->maxRowSize + sizeof(TSCKSUM);
   SRowHead *rowHead = (SRowHead *)malloc(total_size);
   if (rowHead == NULL) {
-    sdbError("failed to allocate row head memory, sdb: %s", pTable->name);
+    sdbError("failed to allocate row head memory, sdb:%s", pTable->name);
     return -1;
   }
+
+  sdbTrace("open sdb file:%s for read", pTable->fn);
 
   // Loop to read sdb file row by row
   while (1) {
@@ -195,7 +190,7 @@ int sdbInitTableByFile(SSdbTable *pTable) {
 
     bytes = read(pTable->fd, rowHead, sizeof(SRowHead));
     if (bytes < 0) {
-      sdbError("failed to read sdb file: %s", pTable->fn);
+      sdbError("failed to read sdb file:%s", pTable->fn);
       goto sdb_exit1;
     }
 
@@ -208,8 +203,8 @@ int sdbInitTableByFile(SSdbTable *pTable) {
     }
 
     if (rowHead->rowSize < 0 || rowHead->rowSize > pTable->maxRowSize) {
-      sdbError("error row size in sdb file: %s  rowSize: %d  maxRowSize: %d", pTable->fn, rowHead->rowSize,
-               pTable->maxRowSize);
+      sdbError("error row size in sdb file:%s, id:%d rowSize:%d maxRowSize:%d",
+              pTable->fn, rowHead->id, rowHead->rowSize, pTable->maxRowSize);
       pTable->size += sizeof(SRowHead);
       continue;
     }
@@ -220,13 +215,13 @@ int sdbInitTableByFile(SSdbTable *pTable) {
     bytes = read(pTable->fd, rowHead->data, rowHead->rowSize + sizeof(TSCKSUM));
     if (bytes < rowHead->rowSize + sizeof(TSCKSUM)) {
       // TODO: Here may cause pTable->size not end of the file
-      sdbError("failed to read sdb file: %s  id: %d  rowSize: %d", pTable->fn, rowHead->id, rowHead->rowSize);
+      sdbError("failed to read sdb file:%s id:%d rowSize:%d", pTable->fn, rowHead->id, rowHead->rowSize);
       break;
     }
 
     real_size = sizeof(SRowHead) + rowHead->rowSize + sizeof(TSCKSUM);
     if (!taosCheckChecksumWhole((uint8_t *)rowHead, real_size)) {
-      sdbError("error sdb checksum, sdb: %s  id: %d, skip", pTable->name, rowHead->id);
+      sdbError("error sdb checksum, sdb:%s  id:%d, skip", pTable->name, rowHead->id);
       pTable->size += real_size;
       continue;
     }
@@ -237,7 +232,7 @@ int sdbInitTableByFile(SSdbTable *pTable) {
     if (pMetaRow == NULL) {  // New object
       if (rowHead->id < 0) {
         /* assert(0); */
-        sdbError("error sdb negative id: %d, sdb: %s, skip", rowHead->id, pTable->name);
+        sdbError("error sdb negative id:%d, sdb:%s, skip", rowHead->id, pTable->name);
       } else {
         rowMeta.id = rowHead->id;
         // TODO: Get rid of the rowMeta.offset and rowSize
@@ -351,10 +346,41 @@ int64_t sdbInsertRow(void *handle, void *row, int rowSize) {
   int        real_size = 0;
   /* char       action = SDB_TYPE_INSERT; */
 
-  if (pTable == NULL) return -1;
+  if (pTable == NULL) {
+    sdbError("sdb tables is null");
+    return -1;
+  }
 
   if ((pTable->keyType != SDB_KEYTYPE_AUTO) || *((int64_t *)row))
-    if (sdbGetRow(handle, row)) return -1;
+    if (sdbGetRow(handle, row)) {
+      if (strcmp(pTable->name, "mnode") == 0) {
+        /*
+         * The first mnode created when the system just start, so the insert action may failed
+         * see sdbPeer.c : sdbInitPeers
+         */
+        pTable->id++;
+        sdbVersion++;
+        sdbPrint("table:%s, record:%s already exist, think it successed, sdbVersion:%ld id:%d",
+                pTable->name, taosIpStr(*(int32_t *)row), sdbVersion, pTable->id);
+        return 0;
+      } else {
+        switch (pTable->keyType) {
+          case SDB_KEYTYPE_STRING:
+            sdbError("table:%s, failed to insert record:%s sdbVersion:%ld id:%d", pTable->name, (char *)row, sdbVersion, pTable->id);
+            break;
+          case SDB_KEYTYPE_UINT32: //dnodes or mnodes
+            sdbError("table:%s, failed to insert record:%s sdbVersion:%ld id:%d", pTable->name, taosIpStr(*(int32_t *)row), sdbVersion, pTable->id);
+            break;
+          case SDB_KEYTYPE_AUTO:
+            sdbError("table:%s, failed to insert record:%s sdbVersion:%ld id:%d", pTable->name, *(int32_t *)row, sdbVersion, pTable->id);
+            break;
+          default:
+            sdbError("table:%s, failed to insert record:%s sdbVersion:%ld id:%d", pTable->name, sdbVersion, pTable->id);
+            break;
+        }
+        return -1;
+      }
+    }
 
   total_size = sizeof(SRowHead) + pTable->maxRowSize + sizeof(TSCKSUM);
   SRowHead *rowHead = (SRowHead *)malloc(total_size);
@@ -378,7 +404,7 @@ int64_t sdbInsertRow(void *handle, void *row, int rowSize) {
     pTable->id++;
     sdbVersion++;
     if (pTable->keyType == SDB_KEYTYPE_AUTO) {
-      // TODO: here need to change
+      // TODO:here need to change
       *((uint32_t *)pObj) = ++pTable->autoIndex;
       (*(pTable->appTool))(SDB_TYPE_ENCODE, pObj, rowHead->data, pTable->maxRowSize, &(rowHead->rowSize));
     }
@@ -388,7 +414,7 @@ int64_t sdbInsertRow(void *handle, void *row, int rowSize) {
     rowHead->delimiter = SDB_DELIMITER;
     rowHead->id = pTable->id;
     if (taosCalcChecksumAppend(0, (uint8_t *)rowHead, real_size) < 0) {
-      sdbError("failed to get checksum while inserting, sdb: %s", pTable->name);
+      sdbError("failed to get checksum while inserting, sdb:%s", pTable->name);
       pthread_mutex_unlock(&pTable->mutex);
       tfree(rowHead);
       return -1;
@@ -413,24 +439,26 @@ int64_t sdbInsertRow(void *handle, void *row, int rowSize) {
     pTable->numOfRows++;
     switch (pTable->keyType) {
       case SDB_KEYTYPE_STRING:
-        sdbTrace(
-            "table:%s, a record is inserted:%s, sdbVersion:%ld id:%ld rowSize:%d numOfRows:%d fileSize:%ld",
-            pTable->name, (char *)row, sdbVersion, rowHead->id, rowHead->rowSize, pTable->numOfRows, pTable->size);
+        sdbTrace("table:%s, a record is inserted:%s, sdbVersion:%ld id:%ld rowSize:%d numOfRows:%d fileSize:%ld",
+                pTable->name, (char *)row, sdbVersion, rowHead->id, rowHead->rowSize, pTable->numOfRows, pTable->size);
         break;
-      case SDB_KEYTYPE_UINT32:
+      case SDB_KEYTYPE_UINT32: //dnodes or mnodes
+        sdbTrace("table:%s, a record is inserted:%s, sdbVersion:%ld id:%ld rowSize:%d numOfRows:%d fileSize:%ld",
+                 pTable->name, taosIpStr(*(int32_t *)row), sdbVersion, rowHead->id, rowHead->rowSize, pTable->numOfRows, pTable->size);
+        break;
       case SDB_KEYTYPE_AUTO:
-        sdbTrace(
-            "table:%s, a record is inserted:%d, sdbVersion:%ld id:%ld rowSize:%d numOfRows:%d fileSize:%ld",
-            pTable->name, *(int32_t *)row, sdbVersion, rowHead->id, rowHead->rowSize, pTable->numOfRows, pTable->size);
+        sdbTrace("table:%s, a record is inserted:%d, sdbVersion:%ld id:%ld rowSize:%d numOfRows:%d fileSize:%ld",
+                pTable->name, *(int32_t *)row, sdbVersion, rowHead->id, rowHead->rowSize, pTable->numOfRows, pTable->size);
         break;
       default:
-        sdbTrace(
-            "table:%s, a record is inserted, sdbVersion:%ld id:%ld rowSize:%d numOfRows:%d fileSize:%ld",
-            pTable->name, sdbVersion, rowHead->id, rowHead->rowSize, pTable->numOfRows, pTable->size);
+        sdbTrace("table:%s, a record is inserted, sdbVersion:%ld id:%ld rowSize:%d numOfRows:%d fileSize:%ld",
+                pTable->name, sdbVersion, rowHead->id, rowHead->rowSize, pTable->numOfRows, pTable->size);
         break;
     }
 
     id = rowMeta.id;
+  } else {
+    sdbError("table:%s, failed to insert record", pTable->name);
   }
 
   tfree(rowHead);
@@ -482,7 +510,7 @@ int sdbDeleteRow(void *handle, void *row) {
   total_size = sizeof(SRowHead) + rowSize + sizeof(TSCKSUM);
   rowHead = (SRowHead *)malloc(total_size);
   if (rowHead == NULL) {
-    sdbError("failed to allocate row head memory, sdb: %s", pTable->name);
+    sdbError("failed to allocate row head memory, sdb:%s", pTable->name);
     return -1;
   }
   memset(rowHead, 0, total_size);
@@ -498,7 +526,7 @@ int sdbDeleteRow(void *handle, void *row) {
     rowHead->id = -(pTable->id);
     memcpy(rowHead->data, row, rowSize);
     if (taosCalcChecksumAppend(0, (uint8_t *)rowHead, total_size) < 0) {
-      sdbError("failed to get checksum while inserting, sdb: %s", pTable->name);
+      sdbError("failed to get checksum while inserting, sdb:%s", pTable->name);
       pthread_mutex_unlock(&pTable->mutex);
       tfree(rowHead);
       return -1;
@@ -510,19 +538,20 @@ int sdbDeleteRow(void *handle, void *row) {
     sdbFinishCommit(pTable);
 
     pTable->numOfRows--;
-    // TODO: Change the update list here
+    // TODO:Change the update list here
     sdbAddIntoUpdateList(pTable, SDB_TYPE_DELETE, pMetaRow);
     switch (pTable->keyType) {
       case SDB_KEYTYPE_STRING:
-        sdbTrace(
-            "table:%s, a record is deleted:%s, sdbVersion:%ld id:%ld numOfRows:%d",
-            pTable->name, (char *)row, sdbVersion, pTable->id, pTable->numOfRows);
+        sdbTrace("table:%s, a record is deleted:%s, sdbVersion:%ld id:%ld numOfRows:%d",
+                pTable->name, (char *)row, sdbVersion, pTable->id, pTable->numOfRows);
         break;
-      case SDB_KEYTYPE_UINT32:
+      case SDB_KEYTYPE_UINT32:  //dnodes or mnodes
+        sdbTrace("table:%s, a record is deleted:%s, sdbVersion:%ld id:%ld numOfRows:%d",
+                 pTable->name, taosIpStr(*(int32_t *)row), sdbVersion, pTable->id, pTable->numOfRows);
+        break;
       case SDB_KEYTYPE_AUTO:
-        sdbTrace(
-            "table:%s, a record is deleted:%d, sdbVersion:%ld id:%ld numOfRows:%d",
-            pTable->name, *(int32_t *)row, sdbVersion, pTable->id, pTable->numOfRows);
+        sdbTrace("table:%s, a record is deleted:%d, sdbVersion:%ld id:%ld numOfRows:%d",
+                pTable->name, *(int32_t *)row, sdbVersion, pTable->id, pTable->numOfRows);
         break;
       default:
         sdbTrace("table:%s, a record is deleted, sdbVersion:%ld id:%ld numOfRows:%d",
@@ -558,7 +587,24 @@ int sdbUpdateRow(void *handle, void *row, int updateSize, char isUpdated) {
   if (pTable == NULL || row == NULL) return -1;
   pMeta = sdbGetRowMeta(handle, row);
   if (pMeta == NULL) {
-    sdbTrace("table:%s, record is not there, update failed", pTable->name);
+    switch (pTable->keyType) {
+      case SDB_KEYTYPE_STRING:
+        sdbError("table:%s, failed to update record:%s, record is not there, sdbVersion:%ld id:%d",
+                pTable->name, (char *) row, sdbVersion, pTable->id);
+        break;
+      case SDB_KEYTYPE_UINT32: //dnodes or mnodes
+        sdbError("table:%s, failed to update record:%s record is not there, sdbVersion:%ld id:%d",
+                pTable->name, taosIpStr(*(int32_t *) row), sdbVersion, pTable->id);
+        break;
+      case SDB_KEYTYPE_AUTO:
+        sdbError("table:%s, failed to update record:F%s record is not there, sdbVersion:%ld id:%d",
+                pTable->name, *(int32_t *) row, sdbVersion, pTable->id);
+        break;
+      default:
+        sdbError("table:%s, failed to update record:%s record is not there, sdbVersion:%ld id:%d",
+                pTable->name, sdbVersion, pTable->id);
+        break;
+    }
     return -1;
   }
 
@@ -568,7 +614,7 @@ int sdbUpdateRow(void *handle, void *row, int updateSize, char isUpdated) {
   total_size = sizeof(SRowHead) + pTable->maxRowSize + sizeof(TSCKSUM);
   SRowHead *rowHead = (SRowHead *)malloc(total_size);
   if (rowHead == NULL) {
-    sdbError("failed to allocate row head memory, sdb: %s", pTable->name);
+    sdbError("failed to allocate row head memory, sdb:%s", pTable->name);
     return -1;
   }
   memset(rowHead, 0, total_size);
@@ -597,7 +643,7 @@ int sdbUpdateRow(void *handle, void *row, int updateSize, char isUpdated) {
     rowHead->delimiter = SDB_DELIMITER;
     rowHead->id = pTable->id;
     if (taosCalcChecksumAppend(0, (uint8_t *)rowHead, real_size) < 0) {
-      sdbError("failed to get checksum, sdb: %s id: %d", pTable->name, rowHead->id);
+      sdbError("failed to get checksum, sdb:%s id:%d", pTable->name, rowHead->id);
       pthread_mutex_unlock(&pTable->mutex);
       tfree(rowHead);
       return -1;
@@ -615,15 +661,16 @@ int sdbUpdateRow(void *handle, void *row, int updateSize, char isUpdated) {
 
     switch (pTable->keyType) {
       case SDB_KEYTYPE_STRING:
-        sdbTrace(
-            "table:%s, a record is updated:%s, sdbVersion:%ld id:%ld numOfRows:%d",
-            pTable->name, (char *)row, sdbVersion, pTable->id, pTable->numOfRows);
+        sdbTrace("table:%s, a record is updated:%s, sdbVersion:%ld id:%ld numOfRows:%d",
+                pTable->name, (char *)row, sdbVersion, pTable->id, pTable->numOfRows);
         break;
-      case SDB_KEYTYPE_UINT32:
+      case SDB_KEYTYPE_UINT32: //dnodes or mnodes
+        sdbTrace("table:%s, a record is updated:%s, sdbVersion:%ld id:%ld numOfRows:%d",
+                 pTable->name, taosIpStr(*(int32_t *)row), sdbVersion, pTable->id, pTable->numOfRows);
+        break;
       case SDB_KEYTYPE_AUTO:
-        sdbTrace(
-            "table:%s, a record is updated:%d, sdbVersion:%ld id:%ld numOfRows:%d",
-            pTable->name, *(int32_t *)row, sdbVersion, pTable->id, pTable->numOfRows);
+        sdbTrace("table:%s, a record is updated:%d, sdbVersion:%ld id:%ld numOfRows:%d",
+                pTable->name, *(int32_t *)row, sdbVersion, pTable->id, pTable->numOfRows);
         break;
       default:
         sdbTrace("table:%s, a record is updated, sdbVersion:%ld id:%ld numOfRows:%d", pTable->name, sdbVersion,
@@ -652,7 +699,7 @@ int sdbBatchUpdateRow(void *handle, void *row, int rowSize) {
   if (pTable == NULL || row == NULL || rowSize <= 0) return -1;
   pMeta = sdbGetRowMeta(handle, row);
   if (pMeta == NULL) {
-    sdbTrace("table: %s, record is not there, batch update failed", pTable->name);
+    sdbTrace("table:%s, record is not there, batch update failed", pTable->name);
     return -1;
   }
 
@@ -662,7 +709,7 @@ int sdbBatchUpdateRow(void *handle, void *row, int rowSize) {
   total_size = sizeof(SRowHead) + pTable->maxRowSize + sizeof(TSCKSUM);
   SRowHead *rowHead = (SRowHead *)malloc(total_size);
   if (rowHead == NULL) {
-    sdbError("failed to allocate row head memory, sdb: %s", pTable->name);
+    sdbError("failed to allocate row head memory, sdb:%s", pTable->name);
     return -1;
   }
 
@@ -760,12 +807,14 @@ void sdbResetTable(SSdbTable *pTable) {
     return;
   }
 
+  sdbTrace("open sdb file:%s for update", pTable->fn);
+
   while (1) {
     memset(rowHead, 0, total_size);
 
     bytes = read(pTable->fd, rowHead, sizeof(SRowHead));
     if (bytes < 0) {
-      sdbError("failed to read sdb file: %s", pTable->fn);
+      sdbError("failed to read sdb file:%s", pTable->fn);
       tfree(rowHead);
       return;
     }
@@ -779,7 +828,7 @@ void sdbResetTable(SSdbTable *pTable) {
     }
 
     if (rowHead->rowSize < 0 || rowHead->rowSize > pTable->maxRowSize) {
-      sdbError("error row size in sdb file: %s  rowSize: %d  maxRowSize: %d", pTable->fn, rowHead->rowSize,
+      sdbError("error row size in sdb file:%s  rowSize:%d  maxRowSize:%d", pTable->fn, rowHead->rowSize,
                pTable->maxRowSize);
       pTable->size += sizeof(SRowHead);
       continue;
@@ -787,13 +836,13 @@ void sdbResetTable(SSdbTable *pTable) {
 
     bytes = read(pTable->fd, rowHead->data, rowHead->rowSize + sizeof(TSCKSUM));
     if (bytes < rowHead->rowSize + sizeof(TSCKSUM)) {
-      sdbError("failed to read sdb file: %s  id: %d  rowSize: %d", pTable->fn, rowHead->id, rowHead->rowSize);
+      sdbError("failed to read sdb file:%s  id:%d  rowSize:%d", pTable->fn, rowHead->id, rowHead->rowSize);
       break;
     }
 
     real_size = sizeof(SRowHead) + rowHead->rowSize + sizeof(TSCKSUM);
     if (!taosCheckChecksumWhole((uint8_t *)rowHead, real_size)) {
-      sdbError("error sdb checksum, sdb: %s  id: %d, skip", pTable->name, rowHead->id);
+      sdbError("error sdb checksum, sdb:%s  id:%d, skip", pTable->name, rowHead->id);
       pTable->size += real_size;
       continue;
     }
@@ -802,10 +851,10 @@ void sdbResetTable(SSdbTable *pTable) {
       pMetaRow = sdbGetRow(pTable, rowHead->data);
       if (pMetaRow == NULL) {  // New object
         if (rowHead->id < 0) {
-          sdbError("error sdb negative id: %d, sdb: %s, skip", rowHead->id, pTable->name);
+          sdbError("error sdb negative id:%d, sdb:%s, skip", rowHead->id, pTable->name);
         } else {
           rowMeta.id = rowHead->id;
-          // TODO: Get rid of the rowMeta.offset and rowSize
+          // TODO:Get rid of the rowMeta.offset and rowSize
           rowMeta.offset = pTable->size;
           rowMeta.rowSize = rowHead->rowSize;
           rowMeta.row = (*(pTable->appTool))(SDB_TYPE_DECODE, NULL, rowHead->data, rowHead->rowSize, NULL);
@@ -838,7 +887,7 @@ void sdbResetTable(SSdbTable *pTable) {
   sdbTrace("table:%s is updated, sdbVerion:%ld id:%ld", pTable->name, sdbVersion, pTable->id);
 }
 
-// TODO: A problem here : use snapshot file to sync another node will cause
+// TODO:A problem here :use snapshot file to sync another node will cause
 // problem
 void sdbSaveSnapShot(void *handle) {
   SSdbTable *pTable = (SSdbTable *)handle;
@@ -868,7 +917,7 @@ void sdbSaveSnapShot(void *handle) {
   total_size = sizeof(SRowHead) + pTable->maxRowSize + sizeof(TSCKSUM);
   SRowHead *rowHead = (SRowHead *)malloc(total_size);
   if (rowHead == NULL) {
-    sdbError("failed to allocate memory while saving SDB snapshot, sdb: %s", pTable->name);
+    sdbError("failed to allocate memory while saving SDB snapshot, sdb:%s", pTable->name);
     return;
   }
   memset(rowHead, 0, size);

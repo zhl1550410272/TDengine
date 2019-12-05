@@ -57,12 +57,12 @@ extern char scriptDir[];
 
 extern char  tsMasterIp[];
 extern char  tsSecondIp[];
-extern short tsMgmtVnodePort;
-extern short tsMgmtShellPort;
-extern short tsVnodeShellPort;
-extern short tsVnodeVnodePort;
-extern short tsMgmtMgmtPort;
-extern short tsMgmtSyncPort;
+extern uint16_t tsMgmtVnodePort;
+extern uint16_t tsMgmtShellPort;
+extern uint16_t tsVnodeShellPort;
+extern uint16_t tsVnodeVnodePort;
+extern uint16_t tsMgmtMgmtPort;
+extern uint16_t tsMgmtSyncPort;
 
 extern int tsStatusInterval;
 extern int tsShellActivityTimer;
@@ -141,7 +141,7 @@ extern int     tsProjectExecInterval;
 extern int64_t tsMaxRetentWindow;
 
 extern char  tsHttpIp[];
-extern short tsHttpPort;
+extern uint16_t tsHttpPort;
 extern int   tsHttpCacheSessions;
 extern int   tsHttpSessionExpire;
 extern int   tsHttpMaxThreads;
@@ -149,6 +149,8 @@ extern int   tsHttpEnableCompress;
 extern int   tsHttpEnableRecordSql;
 extern int   tsTelegrafUseFieldNum;
 extern int   tsAdminRowLimit;
+
+extern int   tsTscEnableRecordSql;
 
 extern char tsMonitorDbName[];
 extern char tsInternalPass[];
@@ -247,12 +249,14 @@ typedef struct {
 extern SGlobalConfig *tsGlobalConfig;
 extern int            tsGlobalConfigNum;
 extern char *         tsCfgStatusStr[];
-SGlobalConfig *tsGetConfigOption(char *option);
+SGlobalConfig *tsGetConfigOption(const char *option);
 
 #define TSDB_CFG_MAX_NUM    110
 #define TSDB_CFG_PRINT_LEN  23
 #define TSDB_CFG_OPTION_LEN 24
 #define TSDB_CFG_VALUE_LEN  41
+
+#define NEEDTO_COMPRESSS_MSG(size) (tsCompressMsgSize != -1 && (size) > tsCompressMsgSize)
 
 #ifdef __cplusplus
 }

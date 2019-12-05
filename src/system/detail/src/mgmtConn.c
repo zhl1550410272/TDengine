@@ -14,8 +14,10 @@
  */
 
 #define _DEFAULT_SOURCE
+
+#include "os.h"
+
 #include "mgmt.h"
-#include <arpa/inet.h>
 #include "taosmsg.h"
 #include "tschemautil.h"
 
@@ -23,7 +25,7 @@ typedef struct {
   char     user[TSDB_METER_ID_LEN];
   uint64_t stime;
   uint32_t ip;
-  short    port;
+  uint16_t port;
 } SConnInfo;
 
 typedef struct {

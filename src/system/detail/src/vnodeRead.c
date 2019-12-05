@@ -14,12 +14,7 @@
  */
 
 #define _DEFAULT_SOURCE
-#include <arpa/inet.h>
-#include <assert.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <time.h>
-#include <unistd.h>
+#include "os.h"
 
 #include "ihash.h"
 #include "taosmsg.h"
@@ -488,13 +483,9 @@ void vnodeFreeQInfo(void *param, bool decQueryRef) {
   }
 
   tfree(pQuery->pGroupbyExpr);
-
   dTrace("QInfo:%p vid:%d sid:%d meterId:%s, QInfo is freed", pQInfo, pObj->vnode, pObj->sid, pObj->meterId);
 
-  /*
-   * destory signature, in order to avoid the query process pass the object
-   * safety check
-   */
+  //destroy signature, in order to avoid the query process pass the object safety check
   memset(pQInfo, 0, sizeof(SQInfo));
   tfree(pQInfo);
 }
@@ -859,7 +850,7 @@ int vnodeSaveQueryResult(void *handle, char *data, int32_t *size) {
   // the remained number of retrieved rows, not the interpolated result
   int numOfRows = pQInfo->pointsRead - pQInfo->pointsReturned;
 
-  int32_t numOfFinal = vnodeCopyQueryResultToMsg(pQInfo, data, numOfRows, size);
+  int32_t numOfFinal = vnodeCopyQueryResultToMsg(pQInfo, data, numOfRows);
   pQInfo->pointsReturned += numOfFinal;
 
   dTrace("QInfo:%p %d are returned, totalReturned:%d totalRead:%d", pQInfo, numOfFinal, pQInfo->pointsReturned,
@@ -871,12 +862,9 @@ int vnodeSaveQueryResult(void *handle, char *data, int32_t *size) {
     uint64_t oldSignature = TSDB_QINFO_SET_QUERY_FLAG(pQInfo);
 
     /*
-     * If SQInfo has been released, the value of signature cannot be equalled to
-     * the address of pQInfo, since in release function, the original value has
-     * been
-     * destroyed. However, this memory area may be reused by another function.
-     * It may be 0 or any value, but it is rarely still be equalled to the address
-     * of SQInfo.
+     * If SQInfo has been released, the value of signature cannot be equalled to the address of pQInfo,
+     * since in release function, the original value has been destroyed. However, this memory area may be reused
+     * by another function. It may be 0 or any value, but it is rarely still be equalled to the address of SQInfo.
      */
     if (oldSignature == 0 || oldSignature != (uint64_t)pQInfo) {
       dTrace("%p freed or killed, old sig:%p abort query", pQInfo, oldSignature);

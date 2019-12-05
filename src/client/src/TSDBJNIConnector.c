@@ -61,13 +61,13 @@ jmethodID g_rowdataSetByteArrayFp;
 
 void jniGetGlobalMethod(JNIEnv *env) {
   // make sure init function executed once
-  switch (__sync_val_compare_and_swap_32(&__init, 0, 1)) {
+  switch (atomic_val_compare_exchange_32(&__init, 0, 1)) {
     case 0:
       break;
     case 1:
       do {
         taosMsleep(0);
-      } while (__sync_val_load_32(&__init) == 1);
+      } while (atomic_load_32(&__init) == 1);
     case 2:
       return;
   }
@@ -107,8 +107,22 @@ void jniGetGlobalMethod(JNIEnv *env) {
   g_rowdataSetByteArrayFp = (*env)->GetMethodID(env, g_rowdataClass, "setByteArray", "(I[B)V");
   (*env)->DeleteLocalRef(env, rowdataClass);
 
-  __sync_val_restore_32(&__init, 2);
+  atomic_store_32(&__init, 2);
   jniTrace("native method register finished");
+}
+
+JNIEXPORT void JNICALL Java_com_taosdata_jdbc_TSDBJNIConnector_setAllocModeImp(JNIEnv *env, jobject jobj, jint jMode, jstring jPath, jboolean jAutoDump) {
+  if (jPath != NULL) {
+    const char *path = (*env)->GetStringUTFChars(env, jPath, NULL);
+    taosSetAllocMode(jMode, path, !!jAutoDump);
+    (*env)->ReleaseStringUTFChars(env, jPath, path);
+  } else {
+    taosSetAllocMode(jMode, NULL, !!jAutoDump);
+  }
+}
+
+JNIEXPORT void JNICALL Java_com_taosdata_jdbc_TSDBJNIConnector_dumpMemoryLeakImp(JNIEnv *env, jobject jobj) {
+  taosDumpMemoryLeak();
 }
 
 JNIEXPORT void JNICALL Java_com_taosdata_jdbc_TSDBJNIConnector_initImp(JNIEnv *env, jobject jobj, jstring jconfigDir) {

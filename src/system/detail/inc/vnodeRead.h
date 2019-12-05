@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
+#include "os.h"
 
 #include "tinterpolation.h"
 #include "vnodeTagMgmt.h"
@@ -47,29 +47,13 @@ typedef struct SQueryLoadCompBlockInfo {
   int32_t fileId;
   int32_t fileListIndex;
 } SQueryLoadCompBlockInfo;
+
 /*
  * the header file info for one vnode
  */
-typedef struct SQueryFileInfo {
-  int32_t fileID;              /* file id */
-  char    headerFilePath[256]; /* full file name */
-  char    dataFilePath[256];
-  char    lastFilePath[256];
-  int32_t defaultMappingSize; /* default mapping size */
-
-  int32_t headerFd;        /* file handler */
-  char*   pHeaderFileData; /* mmap header files */
-  size_t  headFileSize;
-  int32_t  dataFd;
-  char*    pDataFileData;
-  size_t   dataFileSize;
-  uint64_t dtFileMappingOffset;
-
-  int32_t  lastFd;
-  size_t   lastFileSize;
-  uint64_t lastFileMappingOffset;
-
-} SQueryFileInfo;
+typedef struct SHeaderFileInfo {
+  int32_t fileID;        // file id
+} SHeaderFileInfo;
 
 typedef struct SQueryCostSummary {
   double cacheTimeUs;
@@ -106,45 +90,56 @@ typedef struct SOutputRes {
   SResultInfo* resultInfo;
 } SOutputRes;
 
+/*
+ * header files info, avoid to iterate the directory, the data is acquired
+ * during in query preparation function
+ */
+typedef struct SQueryFilesInfo {
+  SHeaderFileInfo* pFileInfo;
+  uint32_t         numOfFiles;  // the total available number of files for this virtual node during query execution
+  int32_t          current;     // the memory mapped header file, NOTE: only one header file can be mmap.
+  int32_t          vnodeId;
+  
+  int32_t          headerFd;    // header file fd
+  char*            pHeaderFileData; // mmap header files
+  int64_t          headFileSize;
+  int32_t          dataFd;
+  int32_t          lastFd;
+  
+  char             headerFilePath[PATH_MAX];  // current opened header file name
+  char             dataFilePath[PATH_MAX];    // current opened data file name
+  char             lastFilePath[PATH_MAX];    // current opened last file path
+  char             dbFilePathPrefix[PATH_MAX];
+} SQueryFilesInfo;
+
 typedef struct RuntimeEnvironment {
-  SPositionInfo startPos; /* the start position, used for secondary/third iteration */
-  SPositionInfo endPos;   /* the last access position in query, served as the start pos of reversed order query */
-  SPositionInfo nextPos;  /* start position of the next scan */
-  SData*        colDataBuffer[TSDB_MAX_COLUMNS];
-  SResultInfo*  resultInfo;
-
-  // Indicate if data block is loaded, the block is first/last/internal block
-  int8_t                  blockStatus;
-  int32_t                 unzipBufSize;
-  SData*                  primaryColBuffer;
-  char*                   unzipBuffer;
-  char*                   secondaryUnzipBuffer;
-  SQuery*                 pQuery;
-  SMeterObj*              pMeterObj;
-  SQLFunctionCtx*         pCtx;
-  SQueryLoadBlockInfo     loadBlockInfo;     /* record current block load information */
+  SPositionInfo       startPos; /* the start position, used for secondary/third iteration */
+  SPositionInfo       endPos;   /* the last access position in query, served as the start pos of reversed order query */
+  SPositionInfo       nextPos;  /* start position of the next scan */
+  SData*              colDataBuffer[TSDB_MAX_COLUMNS];
+  SResultInfo*        resultInfo;
+  uint8_t             blockStatus;  // Indicate if data block is loaded, the block is first/last/internal block
+  int32_t             unzipBufSize;
+  SData*              primaryColBuffer;
+  char*               unzipBuffer;
+  char*               secondaryUnzipBuffer;
+  SQuery*             pQuery;
+  SMeterObj*          pMeterObj;
+  SQLFunctionCtx*     pCtx;
+  SQueryLoadBlockInfo loadBlockInfo;         /* record current block load information */
   SQueryLoadCompBlockInfo loadCompBlockInfo; /* record current compblock information in SQuery */
-
-  /*
-   * header files info, avoid to iterate the directory, the data is acquired
-   * during in query preparation function
-   */
-  SQueryFileInfo* pHeaderFiles;
-  uint32_t        numOfFiles; /* number of files of one vnode during query execution */
-
-  int16_t numOfRowsPerPage;
-  int16_t offset[TSDB_MAX_COLUMNS];
-
-  int16_t            scanFlag; /* denotes reversed scan of data or not */
+  SQueryFilesInfo         vnodeFileInfo;
+  int16_t            numOfRowsPerPage;
+  int16_t            offset[TSDB_MAX_COLUMNS];
+  int16_t            scanFlag;  // denotes reversed scan of data or not
   SInterpolationInfo interpoInfo;
   SData**            pInterpoBuf;
   SOutputRes*        pResult;  // reference to SQuerySupporter->pResult
   void*              hashList;
   int32_t            usedIndex;  // assigned SOutputRes in list
-
-  STSBuf*           pTSBuf;
-  STSCursor         cur;
-  SQueryCostSummary summary;
+  STSBuf*            pTSBuf;
+  STSCursor          cur;
+  SQueryCostSummary  summary;
 } SQueryRuntimeEnv;
 
 /* intermediate result during multimeter query involves interval */
