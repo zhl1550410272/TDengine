@@ -1,4 +1,5 @@
 char version[64] = "2.0.0.1";
 char compatible_version[64] = "2.0.0.1";
-char gitinfo[128] = "5fc1771b0cc41cdba2fc1217a012065564d473c0";
-char buildinfo[512] = "Built by ubuntu at 2019-12-05 22:27";
+char gitinfo[128] = "b9a62d60dc1d4a41452a9bc94e3a0924485c3a75";
+char gitinfoOfInternal[128] = "e6445addc77e8c96dcb57221fa6ab5dcde0458f7";
+char buildinfo[512] = "Built by root at 2019-12-10 10:31";
