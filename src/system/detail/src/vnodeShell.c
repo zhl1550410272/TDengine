@@ -118,6 +118,9 @@ void *vnodeProcessMsgFromShell(char *msg, void *ahandle, void *thandle) {
   } else if (pMsg->msgType == TSDB_MSG_TYPE_SUBMIT) {
     if (vnodeList[vnode].vnodeStatus == TSDB_VN_STATUS_MASTER) {
       vnodeProcessShellSubmitRequest((char *) pMsg->content, pMsg->msgLen - sizeof(SIntMsg), pObj);
+    } else if (vnodeList[vnode].vnodeStatus == TSDB_VN_STATUS_SLAVE) {
+      taosSendSimpleRsp(thandle, pMsg->msgType + 1, TSDB_CODE_REDIRECT);
+      dTrace("vid:%d sid:%d, shell submit msg is redirect since in status:%s", vnode, sid, taosGetVnodeStatusStr(vnodeList[vnode].vnodeStatus));
     } else {
       taosSendSimpleRsp(thandle, pMsg->msgType + 1, TSDB_CODE_NOT_READY);
       dTrace("vid:%d sid:%d, shell submit msg is ignored since in status:%s", vnode, sid, taosGetVnodeStatusStr(vnodeList[vnode].vnodeStatus));
@@ -503,7 +506,7 @@ static int vnodeCheckSubmitBlockContext(SShellSubmitBlock *pBlocks, SVnodeObj *p
   uint64_t uid = htobe64(pBlocks->uid);
 
   if (sid >= pVnode->cfg.maxSessions || sid <= 0) {
-    dError("vid:%d sid:%d, sid is out of range", sid);
+    dError("vid:%d sid:%d, sid is out of range", pVnode->vnode, sid);
     return TSDB_CODE_INVALID_TABLE_ID;
   }
 

@@ -1349,11 +1349,12 @@ static int32_t blockwiseApplyAllFunctions(SQueryRuntimeEnv *pRuntimeEnv, int32_t
  *
  * first filter the data block according to the value filter condition, then, if the top/bottom query applied,
  * invoke the filter function to decide if the data block need to be accessed or not.
+ * TODO handle the whole data block is NULL situation
  * @param pQuery
  * @param pField
  * @return
  */
-static bool needToLoadDataBlock(SQuery *pQuery, SField *pField, SQLFunctionCtx *pCtx) {
+static bool needToLoadDataBlock(SQuery *pQuery, SField *pField, SQLFunctionCtx *pCtx, int32_t numOfTotalPoints) {
   if (pField == NULL) {
     return false;  // no need to load data
   }
@@ -1369,6 +1370,11 @@ static bool needToLoadDataBlock(SQuery *pQuery, SField *pField, SQLFunctionCtx *
 
     // not support pre-filter operation on binary/nchar data type
     if (!vnodeSupportPrefilter(pFilterInfo->info.data.type)) {
+      continue;
+    }
+    
+    // all points in current column are NULL, no need to check its boundary value
+    if (pField[colIndex].numOfNullPoints == numOfTotalPoints) {
       continue;
     }
 
@@ -4233,8 +4239,8 @@ static int32_t moveToNextBlock(SQueryRuntimeEnv *pRuntimeEnv, int32_t step, __bl
 
         return DISK_DATA_LOADED;
       } else {
-        pQuery->pos = (step == QUERY_ASC_FORWARD_STEP) ? 0 : pQuery->pBlock[pQuery->slot].numOfPoints - 1;
         pQuery->slot = (step == QUERY_ASC_FORWARD_STEP) ? 0 : pQuery->numOfBlocks - 1;
+        pQuery->pos = (step == QUERY_ASC_FORWARD_STEP) ? 0 : pQuery->pBlock[pQuery->slot].numOfPoints - 1;
       }
     } else {  // next block in the same file
       int32_t fid = pQuery->fileId;
@@ -6595,7 +6601,7 @@ int32_t LoadDatablockOnDemand(SCompBlock *pBlock, SField **pFields, uint8_t *blk
        * filter the data block according to the value filter condition.
        * no need to load the data block, continue for next block
        */
-      if (!needToLoadDataBlock(pQuery, *pFields, pRuntimeEnv->pCtx)) {
+      if (!needToLoadDataBlock(pQuery, *pFields, pRuntimeEnv->pCtx, pBlock->numOfPoints)) {
 #if defined(_DEBUG_VIEW)
         dTrace("QInfo:%p fileId:%d, slot:%d, block discarded by per-filter, ", GET_QINFO_ADDR(pQuery), pQuery->fileId,
                pQuery->slot);
