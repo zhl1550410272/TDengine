@@ -10,8 +10,11 @@ all: $(TARGET)
 
 exe:
 	gcc $(CFLAGS) ./demo.c -o $(ROOT)/demo $(LFLAGS)
+	gcc $(CFLAGS) ./stream.c -o $(ROOT)/stream $(LFLAGS)
+	gcc $(CFLAGS) ./subscribe.c -o $(ROOT)/subscribe $(LFLAGS)
 
 clean:
 	rm $(ROOT)demo
-
+	rm $(ROOT)stream
+	rm $(ROOT)subscribe
 	
