@@ -294,10 +294,10 @@ typedef struct STwaInfo {
 } STwaInfo;
 
 /* global sql function array */
-extern struct SQLAggFuncElem aAggs[34];
+extern struct SQLAggFuncElem aAggs[];
 
 /* compatible check array list */
-extern int32_t funcCompatDefList[34];
+extern int32_t funcCompatDefList[];
 
 void getStatistics(char *priData, char *data, int32_t size, int32_t numOfRow, int32_t type, int64_t *min, int64_t *max,
                    int64_t *sum, int16_t *minIndex, int16_t *maxIndex, int32_t *numOfNull);
