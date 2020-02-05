@@ -137,6 +137,68 @@ typedef struct STSCompInfo {
   STSBuf *pTSBuf;
 } STSCompInfo;
 
+typedef struct SRateInfo {
+  int64_t CorrectionValue;
+  int64_t firstValue;
+  TSKEY   firstKey;
+  int64_t lastValue;
+  TSKEY   lastKey;
+  int8_t  hasResult;  // flag to denote has value
+  
+} SRateInfo;
+
+typedef struct SIRateInfo {
+  int64_t penultimateValue;
+  TSKEY   penultimateKey;
+  int64_t lastValue;
+  TSKEY   lastKey;
+  int8_t  hasResult;  // flag to denote has value
+} SIRateInfo;
+
+typedef struct SSumRateInfo {
+  int64_t CorrectionValue;
+  int64_t firstValue;
+  TSKEY   firstKey;
+  int64_t lastValue;
+  TSKEY   lastKey;
+  int8_t  hasResult;  // flag to denote has value
+
+  union {
+    int64_t isum;
+    double  dsum;
+  };
+  int8_t hasSumResult;
+} SSumRateInfo;
+
+typedef struct SSumIRateInfo {
+  int64_t penultimateValue;
+  TSKEY   penultimateKey;
+  int64_t lastValue;
+  TSKEY   lastKey;
+  int8_t  hasResult;  // flag to denote has value
+
+  union {
+    int64_t isum;
+    double  dsum;
+  };
+  int8_t hasSumResult;
+} SSumIRateInfo;
+
+typedef struct SAvgRateInfo {
+  int64_t penultimateValue;
+  TSKEY   penultimateKey;
+  int64_t lastValue;
+  TSKEY   lastKey;
+  int8_t  hasResult;  // flag to denote has value
+
+  union {
+    int64_t isum;
+    double  dsum;
+  };
+  int8_t hasSumResult;
+} SAvgRateInfo;
+
+
 int32_t getResultDataInfo(int32_t dataType, int32_t dataBytes, int32_t functionId, int32_t param, int16_t *type,
                           int16_t *bytes, int16_t *intermediateResBytes, int16_t extLength, bool isSuperTable) {
   if (!isValidDataType(dataType, dataBytes)) {
@@ -191,6 +253,42 @@ int32_t getResultDataInfo(int32_t dataType, int32_t dataBytes, int32_t functionI
       *type = TSDB_DATA_TYPE_BINARY;
       *bytes = sizeof(SAvgInfo);
       *intermediateResBytes = *bytes;
+
+      return TSDB_CODE_SUCCESS;
+    } else if (functionId == TSDB_FUNC_RATE) {
+      *type = TSDB_DATA_TYPE_DOUBLE;
+      *bytes = sizeof(SRateInfo);
+      *intermediateResBytes = sizeof(SRateInfo);
+
+      return TSDB_CODE_SUCCESS;
+    } else if (functionId == TSDB_FUNC_IRATE) {
+      *type = TSDB_DATA_TYPE_DOUBLE;
+      *bytes = sizeof(SIRateInfo);
+      *intermediateResBytes = sizeof(SIRateInfo);
+
+      return TSDB_CODE_SUCCESS;
+    } else if (functionId == TSDB_FUNC_SUM_RATE) {
+      *type = TSDB_DATA_TYPE_DOUBLE;
+      *bytes = sizeof(SSumRateInfo);
+      *intermediateResBytes = sizeof(SSumRateInfo);
+
+      return TSDB_CODE_SUCCESS;
+    } else if (functionId == TSDB_FUNC_SUM_IRATE) {
+      *type = TSDB_DATA_TYPE_DOUBLE;
+      *bytes = sizeof(SSumIRateInfo);
+      *intermediateResBytes = sizeof(SSumIRateInfo);
+
+      return TSDB_CODE_SUCCESS;
+    } else if (functionId == TSDB_FUNC_AVG_RATE) {
+      *type = TSDB_DATA_TYPE_DOUBLE;
+      *bytes = sizeof(SAvgRateInfo);
+      *intermediateResBytes = sizeof(SAvgRateInfo);
+
+      return TSDB_CODE_SUCCESS;
+    } else if (functionId == TSDB_FUNC_AVG_IRATE) {
+      *type = TSDB_DATA_TYPE_DOUBLE;
+      *bytes = sizeof(SAvgRateInfo);
+      *intermediateResBytes = sizeof(SAvgRateInfo);
 
       return TSDB_CODE_SUCCESS;
     } else if (functionId == TSDB_FUNC_TOP || functionId == TSDB_FUNC_BOTTOM) {
@@ -252,6 +350,30 @@ int32_t getResultDataInfo(int32_t dataType, int32_t dataBytes, int32_t functionI
     *type = TSDB_DATA_TYPE_DOUBLE;
     *bytes = sizeof(double);
     *intermediateResBytes = sizeof(SAvgInfo);
+  } else if (functionId == TSDB_FUNC_RATE) {
+    *type = TSDB_DATA_TYPE_DOUBLE;
+    *bytes = sizeof(double);
+    *intermediateResBytes = sizeof(SRateInfo);
+  } else if (functionId == TSDB_FUNC_IRATE) {
+    *type = TSDB_DATA_TYPE_DOUBLE;
+    *bytes = sizeof(double);
+    *intermediateResBytes = sizeof(SIRateInfo);
+  } else if (functionId == TSDB_FUNC_SUM_RATE) {
+    *type = TSDB_DATA_TYPE_DOUBLE;
+    *bytes = sizeof(double);
+    *intermediateResBytes = sizeof(SSumRateInfo);
+  } else if (functionId == TSDB_FUNC_SUM_IRATE) {
+    *type = TSDB_DATA_TYPE_DOUBLE;
+    *bytes = sizeof(double);
+    *intermediateResBytes = sizeof(SSumIRateInfo);
+  } else if (functionId == TSDB_FUNC_AVG_RATE) {
+    *type = TSDB_DATA_TYPE_DOUBLE;
+    *bytes = sizeof(double);
+    *intermediateResBytes = sizeof(SAvgRateInfo);
+  } else if (functionId == TSDB_FUNC_AVG_IRATE) {
+    *type = TSDB_DATA_TYPE_DOUBLE;
+    *bytes = sizeof(double);
+    *intermediateResBytes = sizeof(SAvgRateInfo);
   } else if (functionId == TSDB_FUNC_STDDEV) {
     *type = TSDB_DATA_TYPE_DOUBLE;
     *bytes = sizeof(double);
@@ -4347,6 +4469,950 @@ static void ts_comp_finalize(SQLFunctionCtx *pCtx) {
   doFinalizer(pCtx);
 }
 
+//////////////////////////////////////////////////////////////////////////////////////////////
+static bool rate_function_setup(SQLFunctionCtx *pCtx) {
+  if (!function_setup(pCtx)) {
+    return false;
+  }
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);  //->aOutputBuf + pCtx->outputBytes;
+  SRateInfo *   pInfo = pResInfo->interResultBuf;
+
+  pInfo->firstKey    = INT64_MIN;
+  pInfo->lastKey     = INT64_MIN;
+  pInfo->firstValue  = INT64_MIN;
+  pInfo->lastValue   = INT64_MIN;
+  
+  return true;
+}
+
+static void rate_function(SQLFunctionCtx *pCtx) {
+
+  assert(IS_DATA_BLOCK_LOADED(pCtx->blockStatus));
+
+  int32_t      notNullElems = 0;
+  SResultInfo *pResInfo     = GET_RES_INFO(pCtx);
+  SRateInfo   *pRateInfo    = (SRateInfo *)pResInfo->interResultBuf;
+  TSKEY       *primaryKey   = pCtx->ptsList;
+
+  pTrace("%p rate_function() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
+
+  for (int32_t i = 0; i < pCtx->size; ++i) {
+    char *pData = GET_INPUT_CHAR_INDEX(pCtx, i);
+    if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+      pTrace("%p rate_function() index of null data:%d", pCtx, i);
+      continue;
+    }
+
+    notNullElems++;
+    
+    int64_t v = 0;
+    switch (pCtx->inputType) {
+      case TSDB_DATA_TYPE_TINYINT:
+        v = (int64_t)GET_INT8_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_SMALLINT:
+        v = (int64_t)GET_INT16_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_INT:
+        v = (int64_t)GET_INT32_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_BIGINT:
+        v = (int64_t)GET_INT64_VAL(pData);
+        break;
+      default:
+        assert(0);
+    }
+
+    if ((INT64_MIN == pRateInfo->firstValue) || (INT64_MIN == pRateInfo->firstKey)) {
+      pRateInfo->firstValue = v;
+      pRateInfo->firstKey = primaryKey[i];
+    
+      pTrace("firstValue:%" PRId64 " firstKey:%" PRId64, pRateInfo->firstValue, pRateInfo->firstKey);
+    }
+
+    if (INT64_MIN == pRateInfo->lastValue) {
+      pRateInfo->lastValue = v;
+    } else if (v < pRateInfo->lastValue) {
+      pRateInfo->CorrectionValue += pRateInfo->lastValue;
+      pTrace("CorrectionValue:%" PRId64, pRateInfo->CorrectionValue);
+    }
+
+    pRateInfo->lastValue = v;
+    pRateInfo->lastKey   = primaryKey[i];
+    pTrace("lastValue:%" PRId64 " lastKey:%" PRId64, pRateInfo->lastValue, pRateInfo->lastKey);
+  }
+
+  if (!pCtx->hasNull) {
+    assert(pCtx->size == notNullElems);
+  }
+
+  SET_VAL(pCtx, notNullElems, 1);
+
+  if (notNullElems > 0) {
+    pRateInfo->hasResult = DATA_SET_FLAG;
+    pResInfo->hasResult  = DATA_SET_FLAG;
+  }
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if (pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SRateInfo));
+  }
+}
+
+static void rate_function_f(SQLFunctionCtx *pCtx, int32_t index) {
+  void *pData = GET_INPUT_CHAR_INDEX(pCtx, index);
+  if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+    return;
+  }
+
+  // NOTE: keep the intermediate result into the interResultBuf
+  SResultInfo *pResInfo   = GET_RES_INFO(pCtx);
+  SRateInfo   *pRateInfo  = (SRateInfo *)pResInfo->interResultBuf;
+  TSKEY       *primaryKey = pCtx->ptsList;
+
+  int64_t v = 0;
+  switch (pCtx->inputType) {
+    case TSDB_DATA_TYPE_TINYINT:
+      v = (int64_t)GET_INT8_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_SMALLINT:
+      v = (int64_t)GET_INT16_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_INT:
+      v = (int64_t)GET_INT32_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_BIGINT:
+      v = (int64_t)GET_INT64_VAL(pData);
+      break;
+    default:
+      assert(0);
+  }
+  
+  if ((INT64_MIN == pRateInfo->firstValue) || (INT64_MIN == pRateInfo->firstKey)) {
+    pRateInfo->firstValue = v;
+    pRateInfo->firstKey = primaryKey[index];
+  }    
+  
+  if (INT64_MIN == pRateInfo->lastValue) {
+    pRateInfo->lastValue = v;
+  } else if (v < pRateInfo->lastValue) {
+    pRateInfo->CorrectionValue += pRateInfo->lastValue;
+  }
+
+  pRateInfo->lastValue = v;
+  pRateInfo->lastKey   = primaryKey[index];
+
+  pTrace("====%p rate_function_f() index:%d lastValue:%" PRId64 " lastKey:%" PRId64 " CorrectionValue:%" PRId64, pCtx, index, pRateInfo->lastValue, pRateInfo->lastKey, pRateInfo->CorrectionValue);
+
+  SET_VAL(pCtx, 1, 1);
+
+  // set has result flag
+  pRateInfo->hasResult = DATA_SET_FLAG;
+  pResInfo->hasResult  = DATA_SET_FLAG;
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if (pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SRateInfo));
+  }
+}
+
+
+
+static void rate_func_merge(SQLFunctionCtx *pCtx) {
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  assert(pResInfo->superTableQ);
+
+  pTrace("rate_func_merge() size:%d", pCtx->size);
+
+  //SRateInfo *pRateInfo = (SRateInfo *)pResInfo->interResultBuf;
+  SRateInfo *pBuf      = (SRateInfo *)pCtx->aOutputBuf;
+  char      *indicator = pCtx->aInputElemBuf;
+
+  assert(1 == pCtx->size);
+
+  int32_t numOfNotNull = 0;
+  for (int32_t i = 0; i < pCtx->size; ++i, indicator += sizeof(SRateInfo)) {
+    SRateInfo *pInput = (SRateInfo *)indicator;
+    if (DATA_SET_FLAG != pInput->hasResult) {
+      continue;
+    }
+
+    numOfNotNull++;
+    pBuf->firstKey        = pInput->firstKey;
+    pBuf->firstValue      = pInput->firstValue;
+    pBuf->lastKey         = pInput->lastKey;
+    pBuf->lastValue       = pInput->lastValue;
+    pBuf->CorrectionValue = pInput->CorrectionValue;
+    
+    pTrace("%p rate_func_merge() firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64, 
+              pCtx, pInput->firstKey, pInput->lastKey, pInput->firstValue, pInput->lastValue, pInput->CorrectionValue);
+  }
+
+  SET_VAL(pCtx, numOfNotNull, 1);
+
+  if (numOfNotNull > 0) {
+    pBuf->hasResult = DATA_SET_FLAG;
+  }
+  
+  return;
+}
+
+
+
+static void rate_func_copy(SQLFunctionCtx *pCtx) {
+  assert(pCtx->inputType == TSDB_DATA_TYPE_BINARY);
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  memcpy(pResInfo->interResultBuf, pCtx->aInputElemBuf, (size_t)pCtx->inputBytes);
+  pResInfo->hasResult = ((SRateInfo*)pCtx->aInputElemBuf)->hasResult;
+
+  SRateInfo* pRateInfo = (SRateInfo*)pCtx->aInputElemBuf;
+  pTrace("%p rate_func_second_merge() firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
+            pCtx, pRateInfo->firstKey, pRateInfo->lastKey, pRateInfo->firstValue, pRateInfo->lastValue, pRateInfo->CorrectionValue, pRateInfo->hasResult);
+}
+
+static void rate_finalizer(SQLFunctionCtx *pCtx) {
+  SResultInfo *pResInfo  = GET_RES_INFO(pCtx);
+  SRateInfo   *pRateInfo = (SRateInfo *)pResInfo->interResultBuf;
+  
+  pTrace("%p firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
+          pCtx, pRateInfo->firstKey, pRateInfo->lastKey, pRateInfo->firstValue, pRateInfo->lastValue, pRateInfo->CorrectionValue, pRateInfo->hasResult);
+
+  if (pRateInfo->hasResult != DATA_SET_FLAG) {
+    setNull(pCtx->aOutputBuf, TSDB_DATA_TYPE_DOUBLE, sizeof(double));
+    return;
+  }
+  
+  if ((INT64_MIN == pRateInfo->lastKey) || (INT64_MIN == pRateInfo->firstKey) || (pRateInfo->firstKey == pRateInfo->lastKey) 
+    || (pRateInfo->CorrectionValue + pRateInfo->lastValue <=  pRateInfo->firstValue)) {
+    *(double*)pCtx->aOutputBuf = 0;
+  } else {
+
+    double dv = (double)(pRateInfo->lastKey - pRateInfo->firstKey) / 1000;
+
+    *(double *)pCtx->aOutputBuf = (pRateInfo->CorrectionValue + pRateInfo->lastValue -  pRateInfo->firstValue) / dv;
+  }
+  
+  pTrace("rate_finalizer() output result:%f", *(double *)pCtx->aOutputBuf);
+    
+  // cannot set the numOfIteratedElems again since it is set during previous iteration
+  GET_RES_INFO(pCtx)->numOfRes = 1;
+
+  doFinalizer(pCtx);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////
+static bool irate_function_setup(SQLFunctionCtx *pCtx) {
+  if (!function_setup(pCtx)) {
+    return false;
+  }
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);  //->aOutputBuf + pCtx->outputBytes;
+  SIRateInfo  *pInfo    = pResInfo->interResultBuf;
+
+  pInfo->penultimateKey   = INT64_MIN;
+  pInfo->penultimateValue = INT64_MIN;
+  pInfo->lastKey          = INT64_MIN;
+  pInfo->lastValue        = INT64_MIN;
+  
+  return true;
+}
+
+static void irate_function(SQLFunctionCtx *pCtx) {
+
+  assert(IS_DATA_BLOCK_LOADED(pCtx->blockStatus));
+
+  int32_t       notNullElems = 0;
+  SResultInfo  *pResInfo     = GET_RES_INFO(pCtx);
+  SIRateInfo   *pRateInfo    = (SIRateInfo *)pResInfo->interResultBuf;
+  TSKEY        *primaryKey   = pCtx->ptsList;
+
+  pTrace("%p irate_function() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
+
+  if (pCtx->size < 1) {
+    return;
+  }
+
+  for (int32_t i = pCtx->size - 1; i >= 0; --i) {
+    char *pData = GET_INPUT_CHAR_INDEX(pCtx, i);
+    if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+      pTrace("%p irate_function() index of null data:%d", pCtx, i);
+      continue;
+    }
+
+    notNullElems++;
+    
+    int64_t v = 0;
+    switch (pCtx->inputType) {
+      case TSDB_DATA_TYPE_TINYINT:
+        v = (int64_t)GET_INT8_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_SMALLINT:
+        v = (int64_t)GET_INT16_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_INT:
+        v = (int64_t)GET_INT32_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_BIGINT:
+        v = (int64_t)GET_INT64_VAL(pData);
+        break;
+      default:
+        assert(0);
+    }
+
+    // TODO: calc once if only call this function once ????
+    if ((INT64_MIN == pRateInfo->lastKey) || (INT64_MIN == pRateInfo->lastValue)) {
+      pRateInfo->lastValue = v;
+      pRateInfo->lastKey   = primaryKey[i];
+    
+      pTrace("%p irate_function() lastValue:%" PRId64 " lastKey:%" PRId64, pCtx, pRateInfo->lastValue, pRateInfo->lastKey);
+      continue;
+    }
+
+    if ((INT64_MIN == pRateInfo->penultimateKey) || (INT64_MIN == pRateInfo->penultimateValue)){
+      pRateInfo->penultimateValue = v;
+      pRateInfo->penultimateKey = primaryKey[i];
+    
+      pTrace("%p irate_function() penultimateValue:%" PRId64 " penultimateKey:%" PRId64, pCtx, pRateInfo->penultimateValue, pRateInfo->penultimateKey);
+      break;
+    }
+  }
+
+  SET_VAL(pCtx, notNullElems, 1);
+
+  if (notNullElems > 0) {
+    pRateInfo->hasResult = DATA_SET_FLAG;
+    pResInfo->hasResult  = DATA_SET_FLAG;
+  }
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if (pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SIRateInfo));
+  }
+}
+
+static void irate_function_f(SQLFunctionCtx *pCtx, int32_t index) {
+  void *pData = GET_INPUT_CHAR_INDEX(pCtx, index);
+  if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+    return;
+  }
+
+  // NOTE: keep the intermediate result into the interResultBuf
+  SResultInfo  *pResInfo   = GET_RES_INFO(pCtx);
+  SIRateInfo   *pRateInfo  = (SIRateInfo *)pResInfo->interResultBuf;
+  TSKEY        *primaryKey = pCtx->ptsList;
+
+  int64_t v = 0;
+  switch (pCtx->inputType) {
+    case TSDB_DATA_TYPE_TINYINT:
+      v = (int64_t)GET_INT8_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_SMALLINT:
+      v = (int64_t)GET_INT16_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_INT:
+      v = (int64_t)GET_INT32_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_BIGINT:
+      v = (int64_t)GET_INT64_VAL(pData);
+      break;
+    default:
+      assert(0);
+  }
+
+  pRateInfo->penultimateKey   = pRateInfo->lastKey;
+  pRateInfo->penultimateValue = pRateInfo->lastValue;
+  
+  pRateInfo->lastValue = v;
+  pRateInfo->lastKey   = primaryKey[index];
+
+  pTrace("====%p irate_function_f() index:%d lastValue:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " penultimateKey:%" PRId64, pCtx, index, pRateInfo->lastValue, pRateInfo->lastKey, pRateInfo->penultimateValue , pRateInfo->penultimateKey);
+
+  SET_VAL(pCtx, 1, 1);
+
+  // set has result flag
+  pRateInfo->hasResult = DATA_SET_FLAG;
+  pResInfo->hasResult  = DATA_SET_FLAG;
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if (pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SIRateInfo));
+  }
+}
+
+static void irate_func_merge(SQLFunctionCtx *pCtx) {
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  assert(pResInfo->superTableQ);
+
+  pTrace("irate_func_merge() size:%d", pCtx->size);
+
+  //SIRateInfo *pRateInfo = (SIRateInfo *)pResInfo->interResultBuf;
+  SIRateInfo *pBuf      = (SIRateInfo *)pCtx->aOutputBuf;
+  char      *indicator  = pCtx->aInputElemBuf;
+
+  assert(1 == pCtx->size);
+
+  int32_t numOfNotNull = 0;
+  for (int32_t i = 0; i < pCtx->size; ++i, indicator += sizeof(SIRateInfo)) {
+    SIRateInfo *pInput = (SIRateInfo *)indicator;
+    if (DATA_SET_FLAG != pInput->hasResult) {
+      continue;
+    }
+
+    numOfNotNull++;
+    pBuf->penultimateKey        = pInput->penultimateKey;
+    pBuf->penultimateValue      = pInput->penultimateValue;
+    pBuf->lastKey               = pInput->lastKey;
+    pBuf->lastValue             = pInput->lastValue;
+    
+    pTrace("%p irate_func_merge() penultimateKey:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " lastValue:%" PRId64 " hasResult:%d", 
+              pCtx, pInput->penultimateKey, pInput->lastKey, pInput->penultimateValue, pInput->lastValue, pInput->hasResult);
+  }
+
+  SET_VAL(pCtx, numOfNotNull, 1);
+
+  if (numOfNotNull > 0) {
+    pBuf->hasResult = DATA_SET_FLAG;
+  }
+  
+  return;
+}
+
+static void irate_func_copy(SQLFunctionCtx *pCtx) {
+  assert(pCtx->inputType == TSDB_DATA_TYPE_BINARY);
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  memcpy(pResInfo->interResultBuf, pCtx->aInputElemBuf, (size_t)pCtx->inputBytes);
+  pResInfo->hasResult = ((SIRateInfo*)pCtx->aInputElemBuf)->hasResult;
+
+  SIRateInfo* pRateInfo = (SIRateInfo*)pCtx->aInputElemBuf;
+  pTrace("%p rate_func_second_merge() penultimateKey:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " lastValue:%" PRId64 " hasResult:%d", 
+            pCtx, pRateInfo->penultimateKey, pRateInfo->lastKey, pRateInfo->penultimateValue, pRateInfo->lastValue, pRateInfo->hasResult);
+}
+
+static void irate_finalizer(SQLFunctionCtx *pCtx) {
+  SResultInfo *pResInfo  = GET_RES_INFO(pCtx);
+  SIRateInfo   *pRateInfo = (SIRateInfo *)pResInfo->interResultBuf;
+  
+  pTrace("%p penultimateKey:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " lastValue:%" PRId64 " hasResult:%d", 
+          pCtx, pRateInfo->penultimateKey, pRateInfo->lastKey, pRateInfo->penultimateValue, pRateInfo->lastValue, pRateInfo->hasResult);
+
+  if (pRateInfo->hasResult != DATA_SET_FLAG) {
+    setNull(pCtx->aOutputBuf, TSDB_DATA_TYPE_DOUBLE, sizeof(double));
+    return;
+  }
+
+  if ((INT64_MIN == pRateInfo->lastKey) || (INT64_MIN == pRateInfo->penultimateKey) || (pRateInfo->penultimateKey == pRateInfo->lastKey)) {
+    *(double*)pCtx->aOutputBuf = 0;
+  } else {
+    int64_t val = 0;
+    if (pRateInfo->lastValue < pRateInfo->penultimateValue) {
+      val = pRateInfo->lastValue;
+    } else {
+      val = pRateInfo->lastValue -  pRateInfo->penultimateValue;
+    }
+    
+    double dv = (double)(pRateInfo->lastKey - pRateInfo->penultimateKey) / 1000;    
+    *(double *)pCtx->aOutputBuf = val / dv;
+  }
+  
+  pTrace("irate_finalizer() output result:%f", *(double *)pCtx->aOutputBuf);
+    
+  // cannot set the numOfIteratedElems again since it is set during previous iteration
+  GET_RES_INFO(pCtx)->numOfRes = 1;
+
+  doFinalizer(pCtx);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+static bool sumrate_function_setup(SQLFunctionCtx *pCtx) {
+  if (!function_setup(pCtx)) {
+    return false;
+  }
+
+  SResultInfo  *pResInfo = GET_RES_INFO(pCtx);  //->aOutputBuf + pCtx->outputBytes;
+  SSumRateInfo *pInfo    = pResInfo->interResultBuf;
+
+  pInfo->firstKey    = INT64_MIN;
+  pInfo->lastKey     = INT64_MIN;
+  pInfo->firstValue  = INT64_MIN;
+  pInfo->lastValue   = INT64_MIN;
+  
+  return true;
+}
+
+static void sumrate_function(SQLFunctionCtx *pCtx) {
+
+  assert(IS_DATA_BLOCK_LOADED(pCtx->blockStatus));
+
+  int32_t      notNullElems = 0;
+  SResultInfo  *pResInfo     = GET_RES_INFO(pCtx);
+  SSumRateInfo *pRateInfo    = (SSumRateInfo *)pResInfo->interResultBuf;
+  TSKEY        *primaryKey   = pCtx->ptsList;
+
+  pTrace("%p sumrate_function() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
+
+  for (int32_t i = 0; i < pCtx->size; ++i) {
+    char *pData = GET_INPUT_CHAR_INDEX(pCtx, i);
+    if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+      pTrace("%p sumrate_function() index of null data:%d", pCtx, i);
+      continue;
+    }
+
+    notNullElems++;
+    
+    int64_t v = 0;
+    switch (pCtx->inputType) {
+      case TSDB_DATA_TYPE_TINYINT:
+        v = (int64_t)GET_INT8_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_SMALLINT:
+        v = (int64_t)GET_INT16_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_INT:
+        v = (int64_t)GET_INT32_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_BIGINT:
+        v = (int64_t)GET_INT64_VAL(pData);
+        break;
+      default:
+        assert(0);
+    }
+
+    if ((INT64_MIN == pRateInfo->firstValue) || (INT64_MIN == pRateInfo->firstKey)) {
+      pRateInfo->firstValue = v;
+      pRateInfo->firstKey = primaryKey[i];
+    
+      pTrace("firstValue:%" PRId64 " firstKey:%" PRId64, pRateInfo->firstValue, pRateInfo->firstKey);
+    }
+
+    if (INT64_MIN == pRateInfo->lastValue) {
+      pRateInfo->lastValue = v;
+    } else if (v < pRateInfo->lastValue) {
+      pRateInfo->CorrectionValue += pRateInfo->lastValue;
+      pTrace("CorrectionValue:%" PRId64, pRateInfo->CorrectionValue);
+    }
+
+    pRateInfo->lastValue = v;
+    pRateInfo->lastKey   = primaryKey[i];
+    pTrace("lastValue:%" PRId64 " lastKey:%" PRId64, pRateInfo->lastValue, pRateInfo->lastKey);
+  }
+
+  if (!pCtx->hasNull) {
+    assert(pCtx->size == notNullElems);
+  }
+
+  SET_VAL(pCtx, notNullElems, 1);
+
+  if (notNullElems > 0) {
+    pRateInfo->hasResult = DATA_SET_FLAG;
+    pResInfo->hasResult  = DATA_SET_FLAG;
+  }
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if ((DATA_SET_FLAG == pResInfo->hasResult) && pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SSumRateInfo));
+  }
+}
+
+static void sumrate_function_f(SQLFunctionCtx *pCtx, int32_t index) {
+  void *pData = GET_INPUT_CHAR_INDEX(pCtx, index);
+  if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+    return;
+  }
+
+  // NOTE: keep the intermediate result into the interResultBuf
+  SResultInfo  *pResInfo   = GET_RES_INFO(pCtx);
+  SSumRateInfo *pRateInfo  = (SSumRateInfo *)pResInfo->interResultBuf;
+  TSKEY        *primaryKey = pCtx->ptsList;
+
+  int64_t v = 0;
+  switch (pCtx->inputType) {
+    case TSDB_DATA_TYPE_TINYINT:
+      v = (int64_t)GET_INT8_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_SMALLINT:
+      v = (int64_t)GET_INT16_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_INT:
+      v = (int64_t)GET_INT32_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_BIGINT:
+      v = (int64_t)GET_INT64_VAL(pData);
+      break;
+    default:
+      assert(0);
+  }
+  
+  if ((INT64_MIN == pRateInfo->firstValue) || (INT64_MIN == pRateInfo->firstKey)) {
+    pRateInfo->firstValue = v;
+    pRateInfo->firstKey = primaryKey[index];
+  }    
+  
+  if (INT64_MIN == pRateInfo->lastValue) {
+    pRateInfo->lastValue = v;
+  } else if (v < pRateInfo->lastValue) {
+    pRateInfo->CorrectionValue += pRateInfo->lastValue;
+  }
+
+  pRateInfo->lastValue = v;
+  pRateInfo->lastKey   = primaryKey[index];
+
+  pTrace("====%p sumrate_function_f() index:%d lastValue:%" PRId64 " lastKey:%" PRId64 " CorrectionValue:%" PRId64, pCtx, index, pRateInfo->lastValue, pRateInfo->lastKey, pRateInfo->CorrectionValue);
+
+  SET_VAL(pCtx, 1, 1);
+
+  // set has result flag
+  pRateInfo->hasResult = DATA_SET_FLAG;
+  pResInfo->hasResult  = DATA_SET_FLAG;
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if (pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SSumRateInfo));
+  }
+}
+
+// when sun rate from super table, this function merge these result from multi sub table on server
+static void sumrate_func_merge(SQLFunctionCtx *pCtx) {
+  int32_t notNullElems = 0;
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  assert(pResInfo->superTableQ);
+
+  pTrace("%p sumrate_func_merge() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
+
+  for (int32_t i = 0; i < pCtx->size; ++i) {
+    char *    input = GET_INPUT_CHAR_INDEX(pCtx, i);
+    SSumRateInfo *pInput = (SSumRateInfo *)input;
+  
+    pTrace("%p sumrate_func_merge() index:%d hasResult:%d firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
+            pCtx, i, pInput->hasResult, pInput->firstKey, pInput->lastKey, pInput->firstValue, pInput->lastValue, pInput->CorrectionValue, pInput->hasResult);
+
+    if (pInput->hasResult != DATA_SET_FLAG) {
+      continue;
+    }
+
+    // first calc rate, then sum the result
+    double tmpResult;
+    if ((INT64_MIN == pInput->lastKey) || (INT64_MIN == pInput->firstKey) || (pInput->firstKey == pInput->lastKey) 
+      || (pInput->CorrectionValue + pInput->lastValue <=  pInput->firstValue)) {
+      tmpResult = 0;
+    } else {    
+      double dv = (double)(pInput->lastKey - pInput->firstKey) / 1000;    
+      tmpResult = (pInput->CorrectionValue + pInput->lastValue -  pInput->firstValue) / dv;
+    }
+
+    *(double *)pCtx->aOutputBuf += tmpResult;
+
+    notNullElems++;
+  }
+
+  SET_VAL(pCtx, notNullElems, 1);
+  SSumRateInfo *pSumRateInfo = (SSumRateInfo *)pCtx->aOutputBuf;
+
+  if (notNullElems > 0) {
+    pSumRateInfo->hasSumResult = DATA_SET_FLAG;
+  }
+  
+  return;
+}
+
+// when sun rate from super table, this function merge these result from multi vnode on client
+static void sumrate_func_second_merge(SQLFunctionCtx *pCtx) {
+  int32_t notNullElems = 0;
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  assert(pResInfo->superTableQ);
+
+  pTrace("%p sumrate_func_second_merge() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
+
+  for (int32_t i = 0; i < pCtx->size; ++i) {
+    char *    input = GET_INPUT_CHAR_INDEX(pCtx, i);
+    SSumRateInfo *pInput = (SSumRateInfo *)input;
+  
+    pTrace("%p sumrate_func_second_merge() index:%d hasSumResult:%d dsum:%f", pCtx, i, pInput->hasSumResult, pInput->dsum);
+    
+    if (pInput->hasSumResult != DATA_SET_FLAG) {
+      continue;
+    }
+
+    *(double *)pCtx->aOutputBuf += pInput->dsum;
+
+    notNullElems++;
+  }
+
+  pTrace("%p sumrate_func_second_merge() sum result:%f", pCtx, *(double *)pCtx->aOutputBuf);
+
+  SET_VAL(pCtx, notNullElems, 1);
+  //SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+
+  if (notNullElems > 0) {
+    pResInfo->hasResult = DATA_SET_FLAG;
+  }
+}
+
+static void sumrate_finalizer(SQLFunctionCtx *pCtx) {
+  SResultInfo *pResInfo  = GET_RES_INFO(pCtx);
+  SSumRateInfo   *pRateInfo = (SSumRateInfo *)pResInfo->interResultBuf;
+  
+  pTrace("%p firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
+          pCtx, pRateInfo->firstKey, pRateInfo->lastKey, pRateInfo->firstValue, pRateInfo->lastValue, pRateInfo->CorrectionValue, pRateInfo->hasResult);
+
+  if (pRateInfo->hasResult != DATA_SET_FLAG) {
+    setNull(pCtx->aOutputBuf, TSDB_DATA_TYPE_DOUBLE, sizeof(double));
+    return;
+  }
+  
+  if ((INT64_MIN == pRateInfo->lastKey) || (pRateInfo->firstKey == pRateInfo->lastKey) 
+    || (pRateInfo->CorrectionValue + pRateInfo->lastValue <=  pRateInfo->firstValue)) {
+    *(double*)pCtx->aOutputBuf = 0;
+  } else {
+
+    double dv = (double)(pRateInfo->lastKey - pRateInfo->firstKey) / 1000;
+
+    *(double *)pCtx->aOutputBuf = (pRateInfo->CorrectionValue + pRateInfo->lastValue -  pRateInfo->firstValue) / dv;
+  }
+  
+  pTrace("sumrate_finalizer() output result:%f", *(double *)pCtx->aOutputBuf);
+    
+  // cannot set the numOfIteratedElems again since it is set during previous iteration
+  GET_RES_INFO(pCtx)->numOfRes = 1;
+
+  doFinalizer(pCtx);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////
+static bool sumirate_function_setup(SQLFunctionCtx *pCtx) {
+  if (!function_setup(pCtx)) {
+    return false;
+  }
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);  //->aOutputBuf + pCtx->outputBytes;
+  SSumIRateInfo  *pInfo    = pResInfo->interResultBuf;
+
+  pInfo->penultimateKey   = INT64_MIN;
+  pInfo->penultimateValue = INT64_MIN;
+  pInfo->lastKey          = INT64_MIN;
+  pInfo->lastValue        = INT64_MIN;
+  
+  return true;
+}
+
+static void sumirate_function(SQLFunctionCtx *pCtx) {
+
+  assert(IS_DATA_BLOCK_LOADED(pCtx->blockStatus));
+
+  int32_t       notNullElems = 0;
+  SResultInfo  *pResInfo     = GET_RES_INFO(pCtx);
+  SSumIRateInfo   *pRateInfo    = (SSumIRateInfo *)pResInfo->interResultBuf;
+  TSKEY        *primaryKey   = pCtx->ptsList;
+
+  pTrace("%p irate_function() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
+
+  if (pCtx->size < 1) {
+    return;
+  }
+
+  for (int32_t i = pCtx->size - 1; i >= 0; --i) {
+    char *pData = GET_INPUT_CHAR_INDEX(pCtx, i);
+    if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+      pTrace("%p irate_function() index of null data:%d", pCtx, i);
+      continue;
+    }
+
+    notNullElems++;
+    
+    int64_t v = 0;
+    switch (pCtx->inputType) {
+      case TSDB_DATA_TYPE_TINYINT:
+        v = (int64_t)GET_INT8_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_SMALLINT:
+        v = (int64_t)GET_INT16_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_INT:
+        v = (int64_t)GET_INT32_VAL(pData);
+        break;
+      case TSDB_DATA_TYPE_BIGINT:
+        v = (int64_t)GET_INT64_VAL(pData);
+        break;
+      default:
+        assert(0);
+    }
+
+    // TODO: calc once if only call this function once ????
+    if ((INT64_MIN == pRateInfo->lastKey) || (INT64_MIN == pRateInfo->lastValue)) {
+      pRateInfo->lastValue = v;
+      pRateInfo->lastKey   = primaryKey[i];
+    
+      pTrace("%p irate_function() lastValue:%" PRId64 " lastKey:%" PRId64, pCtx, pRateInfo->lastValue, pRateInfo->lastKey);
+      continue;
+    }
+
+    if ((INT64_MIN == pRateInfo->penultimateKey) || (INT64_MIN == pRateInfo->penultimateValue)){
+      pRateInfo->penultimateValue = v;
+      pRateInfo->penultimateKey = primaryKey[i];
+    
+      pTrace("%p irate_function() penultimateValue:%" PRId64 " penultimateKey:%" PRId64, pCtx, pRateInfo->penultimateValue, pRateInfo->penultimateKey);
+      break;
+    }
+  }
+
+  SET_VAL(pCtx, notNullElems, 1);
+
+  if (notNullElems > 0) {
+    pRateInfo->hasResult = DATA_SET_FLAG;
+    pResInfo->hasResult  = DATA_SET_FLAG;
+  }
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if (pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SSumIRateInfo));
+  }
+}
+
+static void sumirate_function_f(SQLFunctionCtx *pCtx, int32_t index) {
+  void *pData = GET_INPUT_CHAR_INDEX(pCtx, index);
+  if (pCtx->hasNull && isNull(pData, pCtx->inputType)) {
+    return;
+  }
+
+  // NOTE: keep the intermediate result into the interResultBuf
+  SResultInfo  *pResInfo   = GET_RES_INFO(pCtx);
+  SSumIRateInfo   *pRateInfo  = (SSumIRateInfo *)pResInfo->interResultBuf;
+  TSKEY        *primaryKey = pCtx->ptsList;
+
+  int64_t v = 0;
+  switch (pCtx->inputType) {
+    case TSDB_DATA_TYPE_TINYINT:
+      v = (int64_t)GET_INT8_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_SMALLINT:
+      v = (int64_t)GET_INT16_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_INT:
+      v = (int64_t)GET_INT32_VAL(pData);
+      break;
+    case TSDB_DATA_TYPE_BIGINT:
+      v = (int64_t)GET_INT64_VAL(pData);
+      break;
+    default:
+      assert(0);
+  }
+
+  pRateInfo->penultimateKey   = pRateInfo->lastKey;
+  pRateInfo->penultimateValue = pRateInfo->lastValue;
+  
+  pRateInfo->lastValue = v;
+  pRateInfo->lastKey   = primaryKey[index];
+
+  pTrace("====%p irate_function_f() index:%d lastValue:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " penultimateKey:%" PRId64, pCtx, index, pRateInfo->lastValue, pRateInfo->lastKey, pRateInfo->penultimateValue , pRateInfo->penultimateKey);
+
+  SET_VAL(pCtx, 1, 1);
+
+  // set has result flag
+  pRateInfo->hasResult = DATA_SET_FLAG;
+  pResInfo->hasResult  = DATA_SET_FLAG;
+
+  // keep the data into the final output buffer for super table query since this execution may be the last one
+  if (pResInfo->superTableQ) {
+    memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SSumIRateInfo));
+  }
+}
+
+static void sumirate_func_merge(SQLFunctionCtx *pCtx) {
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  assert(pResInfo->superTableQ);
+
+  pTrace("irate_func_merge() size:%d", pCtx->size);
+
+  //SIRateInfo *pRateInfo = (SIRateInfo *)pResInfo->interResultBuf;
+  SSumIRateInfo *pBuf      = (SSumIRateInfo *)pCtx->aOutputBuf;
+  char      *indicator  = pCtx->aInputElemBuf;
+
+  assert(1 == pCtx->size);
+
+  int32_t numOfNotNull = 0;
+  for (int32_t i = 0; i < pCtx->size; ++i, indicator += sizeof(SSumIRateInfo)) {
+    SSumIRateInfo *pInput = (SSumIRateInfo *)indicator;
+    if (DATA_SET_FLAG != pInput->hasResult) {
+      continue;
+    }
+
+    numOfNotNull++;
+    pBuf->penultimateKey        = pInput->penultimateKey;
+    pBuf->penultimateValue      = pInput->penultimateValue;
+    pBuf->lastKey               = pInput->lastKey;
+    pBuf->lastValue             = pInput->lastValue;
+    
+    pTrace("%p irate_func_merge() penultimateKey:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " lastValue:%" PRId64 " hasResult:%d", 
+              pCtx, pInput->penultimateKey, pInput->lastKey, pInput->penultimateValue, pInput->lastValue, pInput->hasResult);
+  }
+
+  SET_VAL(pCtx, numOfNotNull, 1);
+
+  if (numOfNotNull > 0) {
+    pBuf->hasResult = DATA_SET_FLAG;
+  }
+  
+  return;
+}
+
+static void sumirate_func_second_merge(SQLFunctionCtx *pCtx) {
+  assert(pCtx->inputType == TSDB_DATA_TYPE_BINARY);
+
+  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
+  memcpy(pResInfo->interResultBuf, pCtx->aInputElemBuf, (size_t)pCtx->inputBytes);
+  pResInfo->hasResult = ((SSumIRateInfo*)pCtx->aInputElemBuf)->hasResult;
+
+  SSumIRateInfo* pRateInfo = (SSumIRateInfo*)pCtx->aInputElemBuf;
+  pTrace("%p rate_func_second_merge() penultimateKey:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " lastValue:%" PRId64 " hasResult:%d", 
+            pCtx, pRateInfo->penultimateKey, pRateInfo->lastKey, pRateInfo->penultimateValue, pRateInfo->lastValue, pRateInfo->hasResult);
+}
+
+static void sumirate_finalizer(SQLFunctionCtx *pCtx) {
+  SResultInfo *pResInfo  = GET_RES_INFO(pCtx);
+  SSumIRateInfo   *pRateInfo = (SSumIRateInfo *)pResInfo->interResultBuf;
+  
+  pTrace("%p penultimateKey:%" PRId64 " lastKey:%" PRId64 " penultimateValue:%" PRId64 " lastValue:%" PRId64 " hasResult:%d", 
+          pCtx, pRateInfo->penultimateKey, pRateInfo->lastKey, pRateInfo->penultimateValue, pRateInfo->lastValue, pRateInfo->hasResult);
+
+  if (pRateInfo->hasResult != DATA_SET_FLAG) {
+    setNull(pCtx->aOutputBuf, TSDB_DATA_TYPE_DOUBLE, sizeof(double));
+    return;
+  }
+
+  if ((INT64_MIN == pRateInfo->lastKey) || (INT64_MIN == pRateInfo->penultimateKey) || (pRateInfo->penultimateKey == pRateInfo->lastKey)) {
+    *(double*)pCtx->aOutputBuf = 0;
+  } else {
+    int64_t val = 0;
+    if (pRateInfo->lastValue < pRateInfo->penultimateValue) {
+      val = pRateInfo->lastValue;
+    } else {
+      val = pRateInfo->lastValue -  pRateInfo->penultimateValue;
+    }
+    
+    double dv = (double)(pRateInfo->lastKey - pRateInfo->penultimateKey) / 1000;    
+    *(double *)pCtx->aOutputBuf = val / dv;
+  }
+  
+  pTrace("irate_finalizer() output result:%f", *(double *)pCtx->aOutputBuf);
+    
+  // cannot set the numOfIteratedElems again since it is set during previous iteration
+  GET_RES_INFO(pCtx)->numOfRes = 1;
+
+  doFinalizer(pCtx);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
 /*
  * function compatible list.
  * tag and ts are not involved in the compatibility check
@@ -4358,7 +5424,7 @@ static void ts_comp_finalize(SQLFunctionCtx *pCtx) {
  *    e.g., count/sum/avg/min/max/stddev/percentile/apercentile/first/last...
  *
  */
-int32_t funcCompatDefList[28] = {
+int32_t funcCompatDefList[34] = {
     /*
      * count, sum, avg, min, max, stddev, percentile, apercentile, first, last
      */
@@ -4372,9 +5438,13 @@ int32_t funcCompatDefList[28] = {
     /*
      * colprj, tagprj, arithmetic, diff, first_dist, last_dist, interp
      */
-    1, 1, 1, -1, 1, 1, 5};
+    1, 1, 1, -1, 1, 1, 5,
+    /*
+     * rate, irate, sum_rate, sum_irate, avg_rate, avg_irate
+     */
+    1, 1, 1, 1, 1, 1};
 
-SQLAggFuncElem aAggs[28] = {{
+SQLAggFuncElem aAggs[34] = {{
                                 // 0, count function does not invoke the finalize function
                                 "count",
                                 TSDB_FUNC_COUNT,
@@ -4797,4 +5867,64 @@ SQLAggFuncElem aAggs[28] = {{
                                 noop1,
                                 copy_function,
                                 no_data_info,
+                            },
+                            {
+                                // 28
+                                "rate",
+                                TSDB_FUNC_RATE,
+                                TSDB_FUNC_RATE,
+                                TSDB_BASE_FUNC_SO | TSDB_FUNCSTATE_NEED_TS,
+                                rate_function_setup,
+                                rate_function,
+                                rate_function_f,
+                                no_next_step,
+                                rate_finalizer,
+                                rate_func_merge,
+                                rate_func_copy,
+                                data_req_load_info,
+                            },
+                            {
+                                // 29
+                                "irate",
+                                TSDB_FUNC_IRATE,
+                                TSDB_FUNC_IRATE,
+                                TSDB_BASE_FUNC_SO | TSDB_FUNCSTATE_NEED_TS,
+                                irate_function_setup,
+                                irate_function,
+                                irate_function_f,
+                                no_next_step,
+                                irate_finalizer,
+                                irate_func_merge,
+                                irate_func_copy,
+                                data_req_load_info,
+                            },
+                            {
+                                // 30
+                                "sum_rate",
+                                TSDB_FUNC_SUM_RATE,
+                                TSDB_FUNC_SUM_RATE,
+                                TSDB_BASE_FUNC_SO | TSDB_FUNCSTATE_NEED_TS,
+                                sumrate_function_setup,
+                                sumrate_function,
+                                sumrate_function_f,
+                                no_next_step,
+                                sumrate_finalizer,
+                                sumrate_func_merge,
+                                sumrate_func_second_merge,
+                                data_req_load_info,
+                            },
+                            {
+                                // 31
+                                "sum_irate",
+                                TSDB_FUNC_SUM_IRATE,
+                                TSDB_FUNC_SUM_IRATE,
+                                TSDB_BASE_FUNC_SO | TSDB_FUNCSTATE_NEED_TS,
+                                sumirate_function_setup,
+                                sumirate_function,
+                                sumirate_function_f,
+                                no_next_step,
+                                sumirate_finalizer,
+                                sumirate_func_merge,
+                                sumirate_func_second_merge,
+                                data_req_load_info,
                             }};

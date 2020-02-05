@@ -962,7 +962,7 @@ static void vnodeMultiMeterQueryProcessor(SQInfo *pQInfo) {
     return;
   }
 
-  if (pQuery->nAggTimeInterval > 0) {
+  if (pQuery->nAggTimeInterval > 0  || isSumAvgRateQuery(pQuery)) {
     assert(pSupporter->subgroupIdx == 0 && pSupporter->numOfGroupResultPages == 0);
 
     if (mergeMetersResultToOneGroups(pSupporter) == TSDB_CODE_SUCCESS) {
