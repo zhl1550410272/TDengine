@@ -4558,7 +4558,7 @@ int32_t vnodeMultiMeterQueryPrepare(SQInfo *pQInfo, SQuery *pQuery, void *param)
     initSlidingWindowInfo(&pRuntimeEnv->swindowResInfo, 10039, type, pSupporter->pResult);
   }
 
-  if (pQuery->nAggTimeInterval != 0) {
+  if (pQuery->nAggTimeInterval != 0 || isSumAvgRateQuery(pQuery)) {
     getTmpfilePath("tb_metric_mmap", pSupporter->extBufFile);
     pSupporter->meterOutputFd = open(pSupporter->extBufFile, O_CREAT | O_RDWR, 0666);
 

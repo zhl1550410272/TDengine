@@ -398,7 +398,7 @@ static void queryOnMultiDataFiles(SQInfo *pQInfo, SMeterDataInfo *pMeterDataInfo
 
       restoreIntervalQueryRange(pRuntimeEnv, pMeterQueryInfo);
 
-      if (pQuery->nAggTimeInterval == 0) {  // normal query
+      if (pQuery->nAggTimeInterval == 0 && !isSumAvgRateQuery(pQuery)) {  // normal query
         if ((pQuery->lastKey > pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
             (pQuery->lastKey < pQuery->ekey && !QUERY_IS_ASC_QUERY(pQuery))) {
           qTrace(
