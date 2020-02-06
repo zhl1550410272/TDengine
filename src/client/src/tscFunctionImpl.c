@@ -4373,7 +4373,7 @@ static void ts_comp_finalize(SQLFunctionCtx *pCtx) {
 // RATE functions
 
 static double do_calc_rate(const SRateInfo* pRateInfo) {
-  if ((INT64_MIN == pRateInfo->lastKey) || (pRateInfo->firstKey >= pRateInfo->lastKey)) {
+  if ((INT64_MIN == pRateInfo->lastKey) || (INT64_MIN == pRateInfo->firstKey) || (pRateInfo->firstKey >= pRateInfo->lastKey)) {
     return 0;
   }
   
@@ -4393,7 +4393,13 @@ static double do_calc_rate(const SRateInfo* pRateInfo) {
 
   int64_t duration = pRateInfo->lastKey - pRateInfo->firstKey;
   duration = (duration + 500) / 1000;
-  return ((double)diff) / duration;
+
+  double resultVal = ((double)diff) / duration;
+
+  pTrace("do_calc_rate() isIRate:%d firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " resultVal:%f", 
+            pRateInfo->isIRate, pRateInfo->firstKey, pRateInfo->lastKey, pRateInfo->firstValue, pRateInfo->lastValue, pRateInfo->CorrectionValue, resultVal);
+  
+  return resultVal;
 }
 
 
@@ -4624,7 +4630,8 @@ static void rate_finalizer(SQLFunctionCtx *pCtx) {
   pTrace("rate_finalizer() output result:%f", *(double *)pCtx->aOutputBuf);
     
   // cannot set the numOfIteratedElems again since it is set during previous iteration
-  GET_RES_INFO(pCtx)->numOfRes = 1;
+  pResInfo->numOfRes  = 1;
+  pResInfo->hasResult = DATA_SET_FLAG;
 
   doFinalizer(pCtx);
 }
@@ -4752,88 +4759,6 @@ static void irate_function_f(SQLFunctionCtx *pCtx, int32_t index) {
   }
 }
 
-#if 0
-// when sun rate from super table, this function merge these result from multi sub table on server
-static void sumrate_func_merge(SQLFunctionCtx *pCtx) {
-  int32_t notNullElems = 0;
-
-  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
-  assert(pResInfo->superTableQ);
-
-  pTrace("%p sumrate_func_merge() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
-
-  for (int32_t i = 0; i < pCtx->size; ++i) {
-    char *    input = GET_INPUT_CHAR_INDEX(pCtx, i);
-    SSumRateInfo *pInput = (SSumRateInfo *)input;
-  
-    pTrace("%p sumrate_func_merge() index:%d hasResult:%d firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
-            pCtx, i, pInput->hasResult, pInput->firstKey, pInput->lastKey, pInput->firstValue, pInput->lastValue, pInput->CorrectionValue, pInput->hasResult);
-
-    if (pInput->hasResult != DATA_SET_FLAG) {
-      continue;
-    }
-
-    // first calc rate, then sum the result
-    double tmpResult;
-    if ((INT64_MIN == pInput->lastKey) || (INT64_MIN == pInput->firstKey) || (pInput->firstKey == pInput->lastKey) 
-      || (pInput->CorrectionValue + pInput->lastValue <=  pInput->firstValue)) {
-      tmpResult = 0;
-    } else {    
-      double dv = (double)(pInput->lastKey - pInput->firstKey) / 1000;    
-      tmpResult = (pInput->CorrectionValue + pInput->lastValue -  pInput->firstValue) / dv;
-    }
-
-    *(double *)pCtx->aOutputBuf += tmpResult;
-
-    notNullElems++;
-  }
-
-  SET_VAL(pCtx, notNullElems, 1);
-  SSumRateInfo *pSumRateInfo = (SSumRateInfo *)pCtx->aOutputBuf;
-
-  if (notNullElems > 0) {
-    pSumRateInfo->hasSumResult = DATA_SET_FLAG;
-  }
-  
-  return;
-}
-
-// when sun rate from super table, this function merge these result from multi vnode on client
-static void sumrate_func_second_merge(SQLFunctionCtx *pCtx) {
-  int32_t notNullElems = 0;
-
-  SResultInfo *pResInfo = GET_RES_INFO(pCtx);
-  assert(pResInfo->superTableQ);
-
-  pTrace("%p sumrate_func_second_merge() size:%d, hasNull:%d", pCtx, pCtx->size, pCtx->hasNull);
-
-  for (int32_t i = 0; i < pCtx->size; ++i) {
-    char *    input = GET_INPUT_CHAR_INDEX(pCtx, i);
-    SSumRateInfo *pInput = (SSumRateInfo *)input;
-  
-    pTrace("%p sumrate_func_second_merge() index:%d hasSumResult:%d dsum:%f", pCtx, i, pInput->hasSumResult, pInput->dsum);
-    
-    if (pInput->hasSumResult != DATA_SET_FLAG) {
-      continue;
-    }
-
-    *(double *)pCtx->aOutputBuf += pInput->dsum;
-
-    notNullElems++;
-  }
-
-  pTrace("%p sumrate_func_second_merge() sum result:%f", pCtx, *(double *)pCtx->aOutputBuf);
-
-  SET_VAL(pCtx, notNullElems, 1);
-  //SResultInfo *pResInfo = GET_RES_INFO(pCtx);
-
-  if (notNullElems > 0) {
-    pResInfo->hasResult = DATA_SET_FLAG;
-  }
-}
-
-#else
-
 static void do_sumrate_merge(SQLFunctionCtx *pCtx) {
   SResultInfo *pResInfo = GET_RES_INFO(pCtx);
   assert(pResInfo->superTableQ);
@@ -4843,13 +4768,13 @@ static void do_sumrate_merge(SQLFunctionCtx *pCtx) {
 
   for (int32_t i = 0; i < pCtx->size; ++i, input += pCtx->inputBytes) {
     SRateInfo *pInput = (SRateInfo *)input;
+    
+    pTrace("%p do_sumrate_merge() hasResult:%d input num:%" PRId64 " input sum:%f total num:%" PRId64 " total sum:%f", pCtx, pInput->hasResult, pInput->num, pInput->sum, pRateInfo->num, pRateInfo->sum);
+  
     if (pInput->hasResult != DATA_SET_FLAG) {
       continue;
     } else if (pInput->num == 0) {
-      if (pInput->firstKey < pInput->lastKey) {
-        double dv = (double)(pInput->lastKey - pInput->firstKey) / 1000;
-        pRateInfo->sum += (pInput->CorrectionValue + pInput->lastValue -  pInput->firstValue) / dv;
-      }
+      pRateInfo->sum += do_calc_rate(pInput);
       pRateInfo->num++;
     } else {
       pRateInfo->sum += pInput->sum;
@@ -4859,29 +4784,28 @@ static void do_sumrate_merge(SQLFunctionCtx *pCtx) {
   }
 
   // if the data set hasResult is not set, the result is null
-  if (pRateInfo->num > 0) {
+  if (DATA_SET_FLAG == pRateInfo->hasResult) {
     pResInfo->hasResult = DATA_SET_FLAG;
+    SET_VAL(pCtx, pRateInfo->num, 1);
     memcpy(pCtx->aOutputBuf, pResInfo->interResultBuf, sizeof(SRateInfo));
   }
 }
 
 static void sumrate_func_merge(SQLFunctionCtx *pCtx) {
+  pTrace("%p sumrate_func_merge() process ...", pCtx);
   do_sumrate_merge(pCtx);
 }
 
 static void sumrate_func_second_merge(SQLFunctionCtx *pCtx) {
+  pTrace("%p sumrate_func_second_merge() process ...", pCtx);
   do_sumrate_merge(pCtx);
 }
-
-#endif
-
 
 static void sumrate_finalizer(SQLFunctionCtx *pCtx) {
   SResultInfo *pResInfo  = GET_RES_INFO(pCtx);
   SRateInfo   *pRateInfo = (SRateInfo *)pResInfo->interResultBuf;
 
-  pTrace("%p firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
-          pCtx, pRateInfo->firstKey, pRateInfo->lastKey, pRateInfo->firstValue, pRateInfo->lastValue, pRateInfo->CorrectionValue, pRateInfo->hasResult);
+  pTrace("%p sumrate_finalizer() superTableQ:%d num:%" PRId64 " sum:%f hasResult:%d", pCtx, pResInfo->superTableQ, pRateInfo->num, pRateInfo->sum, pRateInfo->hasResult);
 
   if (pRateInfo->hasResult != DATA_SET_FLAG) {
     setNull(pCtx->aOutputBuf, TSDB_DATA_TYPE_DOUBLE, sizeof(double));
@@ -4889,19 +4813,16 @@ static void sumrate_finalizer(SQLFunctionCtx *pCtx) {
   }
 
   if (pRateInfo->num == 0) {
-      if (pRateInfo->firstKey < pRateInfo->lastKey) {
-        double dv = (double)(pRateInfo->lastKey - pRateInfo->firstKey) / 1000;
-        *(double*)pCtx->aOutputBuf = do_calc_rate(pRateInfo);
-      } else {
-        *(double*)pCtx->aOutputBuf = 0;
-      }
+      // from meter
+      *(double*)pCtx->aOutputBuf = do_calc_rate(pRateInfo);
   } else if (pCtx->functionId == TSDB_FUNC_SUM_RATE || pCtx->functionId == TSDB_FUNC_SUM_IRATE) {
       *(double*)pCtx->aOutputBuf = pRateInfo->sum;
   } else {
       *(double*)pCtx->aOutputBuf = pRateInfo->sum / pRateInfo->num;
   }
 
-  GET_RES_INFO(pCtx)->numOfRes = 1;
+  pResInfo->numOfRes  = 1;
+  pResInfo->hasResult = DATA_SET_FLAG;
   doFinalizer(pCtx);
 }
 
