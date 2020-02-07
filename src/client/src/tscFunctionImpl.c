@@ -4578,14 +4578,9 @@ static void rate_func_merge(SQLFunctionCtx *pCtx) {
     }
 
     numOfNotNull++;
-    pBuf->firstKey        = pInput->firstKey;
-    pBuf->firstValue      = pInput->firstValue;
-    pBuf->lastKey         = pInput->lastKey;
-    pBuf->lastValue       = pInput->lastValue;
-    pBuf->CorrectionValue = pInput->CorrectionValue;
-    
-    pTrace("%p rate_func_merge() firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64, 
-              pCtx, pInput->firstKey, pInput->lastKey, pInput->firstValue, pInput->lastValue, pInput->CorrectionValue);
+    memcpy(pBuf, pInput, sizeof(SRateInfo));
+    pTrace("%p rate_func_merge() isIRate:%d firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64, 
+              pCtx, pInput->isIRate, pInput->firstKey, pInput->lastKey, pInput->firstValue, pInput->lastValue, pInput->CorrectionValue); 
   }
 
   SET_VAL(pCtx, numOfNotNull, 1);
@@ -4617,8 +4612,8 @@ static void rate_finalizer(SQLFunctionCtx *pCtx) {
   SResultInfo *pResInfo  = GET_RES_INFO(pCtx);
   SRateInfo   *pRateInfo = (SRateInfo *)pResInfo->interResultBuf;
   
-  pTrace("%p firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
-          pCtx, pRateInfo->firstKey, pRateInfo->lastKey, pRateInfo->firstValue, pRateInfo->lastValue, pRateInfo->CorrectionValue, pRateInfo->hasResult);
+  pTrace("%p isIRate:%d firstKey:%" PRId64 " lastKey:%" PRId64 " firstValue:%" PRId64 " lastValue:%" PRId64 " CorrectionValue:%" PRId64 " hasResult:%d", 
+          pCtx, pRateInfo->isIRate, pRateInfo->firstKey, pRateInfo->lastKey, pRateInfo->firstValue, pRateInfo->lastValue, pRateInfo->CorrectionValue, pRateInfo->hasResult);
 
   if (pRateInfo->hasResult != DATA_SET_FLAG) {
     setNull(pCtx->aOutputBuf, TSDB_DATA_TYPE_DOUBLE, sizeof(double));
