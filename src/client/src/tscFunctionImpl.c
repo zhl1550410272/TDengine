@@ -4420,7 +4420,7 @@ static bool rate_function_setup(SQLFunctionCtx *pCtx) {
   pInfo->sum = 0;
   
   pInfo->hasResult = 0;
-  pInfo->isIRate == ((pCtx->functionId == TSDB_FUNC_IRATE) || (pCtx->functionId == TSDB_FUNC_SUM_IRATE) || (pCtx->functionId == TSDB_FUNC_AVG_IRATE));
+  pInfo->isIRate = ((pCtx->functionId == TSDB_FUNC_IRATE) || (pCtx->functionId == TSDB_FUNC_SUM_IRATE) || (pCtx->functionId == TSDB_FUNC_AVG_IRATE));
   return true;
 }
 
