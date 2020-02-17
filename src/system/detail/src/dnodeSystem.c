@@ -26,9 +26,6 @@
 #include "tglobalcfg.h"
 #include "vnode.h"
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Woverflow"
-
 SModule         tsModule[TSDB_MOD_MAX] = {0};
 uint32_t        tsModuleStatus = 0;
 pthread_mutex_t dmutex;
@@ -122,24 +119,24 @@ int dnodeInitSystem() {
 
   if (stat(logDir, &dirstat) < 0) mkdir(logDir, 0755);
 
-  sprintf(temp, "%s/powerdlog", logDir);
+  sprintf(temp, "%s/taosdlog", logDir);
   if (taosInitLog(temp, tsNumOfLogLines, 1) < 0) printf("failed to init log file\n");
 
   if (!tsReadGlobalConfig()) {  // TODO : Change this function
     tsPrintGlobalConfig();
-    dError("PowerDB read global config failed");
+    dError("TDengine read global config failed");
     return -1;
   }
 
   if (taosCreateTierDirectory() != 0) {
-    dError("PowerDB init tier directory failed");
+    dError("TDengine init tier directory failed");
     return -1;
   }
 
   vnodeInitMgmtIp();
 
   tsPrintGlobalConfig();
-  dPrint("Server IP address is:%s", tsInternalIp);
+  dPrint("Server IP address is:%s", tsPrivateIp);
 
   taosSetCoreDump();
 
@@ -148,7 +145,7 @@ int dnodeInitSystem() {
   dnodeInitModules();
   pthread_mutex_init(&dmutex, NULL);
 
-  dPrint("starting to initialize PowerDB ...");
+  dPrint("starting to initialize TDengine ...");
 
   vnodeInitQHandle();
   if (dnodeInitSystemSpec() < 0) {
@@ -158,14 +155,14 @@ int dnodeInitSystem() {
   for (int mod = 0; mod < TSDB_MOD_MAX; ++mod) {
     if (tsModule[mod].num != 0 && tsModule[mod].initFp) {
       if ((*tsModule[mod].initFp)() != 0) {
-        dError("PowerDB initialization failed");
+        dError("TDengine initialization failed");
         return -1;
       }
     }
   }
 
   if (vnodeInitSystem() != 0) {
-    dError("PowerDB vnodes initialization failed");
+    dError("TDengine vnodes initialization failed");
     return -1;
   }
 
@@ -173,7 +170,7 @@ int dnodeInitSystem() {
 
   dnodeStartModuleSpec();
 
-  dPrint("PowerDB is initialized successfully");
+  dPrint("TDengine is initialized successfully");
 
   return 0;
 }
@@ -219,5 +216,3 @@ void dnodeCountRequest(SCountInfo *info) {
   info->selectReqNum = atomic_exchange_32(&vnodeSelectReqNum, 0);
   info->insertReqNum = atomic_exchange_32(&vnodeInsertReqNum, 0);
 }
-
-#pragma GCC diagnostic pop
