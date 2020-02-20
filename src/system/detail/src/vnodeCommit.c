@@ -275,16 +275,34 @@ int vnodeWriteToCommitLog(SMeterObj *pObj, char action, char *cont, int contLen,
     return TSDB_CODE_ACTION_IN_PROGRESS;
   }
   char *pWrite = pVnode->pWrite;
-  pVnode->pWrite += sizeof(head) + contLen + sizeof(simpleCheck);
+  int totalSize = sizeof(head) + contLen + sizeof(simpleCheck);
+  pVnode->pWrite += totalSize;
   memcpy(pWrite, (char *)&head, sizeof(head));
   memcpy(pWrite + sizeof(head), cont, contLen);
   memcpy(pWrite + sizeof(head) + contLen, &simpleCheck, sizeof(simpleCheck));
+
+  // Flush the WAL content to disk, for sure.
+  int pageSize = getpagesize();
+  int offset = (uintptr_t) pWrite % pageSize; // ref: https://stackoverflow.com/questions/22672282/using-the-modulo-operator-with-pointers-in-c
+  char * pSyncStart = pWrite; // default, if no offset
+  int syncLen = totalSize;
+  if ( offset != 0 ) { // we have an offset, written content not at page boundary
+    pSyncStart = pWrite - offset;
+    syncLen = totalSize + offset; // need to sync a bigger region
+  }
+  if ( msync(pSyncStart, syncLen, MS_SYNC) ) {
+    dTrace("WAL sync error, errno = %d", errno);
+    printf("failed to sync, errno = %d, exiting...\n", errno);
+    exit(-1);
+  }
+
   pthread_mutex_unlock(&(pVnode->logMutex));
 
   if (pVnode->pWrite - pVnode->pMem > pVnode->mappingThreshold) {
     dTrace("vid:%d, mem mapping is close to limit, commit", pObj->vnode);
     vnodeProcessCommitTimer(pVnode, NULL);
   }
+
 
   dTrace("vid:%d sid:%d, data is written to commit log", pObj->vnode, pObj->sid);
 
