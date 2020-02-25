@@ -28,6 +28,7 @@ typedef struct _sched_msg {
   char *msg;
   void *ahandle;
   void *thandle;
+  struct _sched_msg *next;
 } SSchedMsg;
 
 void *taosInitScheduler(int queueSize, int numOfThreads, const char *label);

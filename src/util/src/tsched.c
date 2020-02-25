@@ -25,12 +25,14 @@ typedef struct {
   tsem_t          emptySem;
   tsem_t          fullSem;
   pthread_mutex_t queueMutex;
-  int             fullSlot;
-  int             emptySlot;
+  // int             fullSlot;
+  // int             emptySlot;
   int             queueSize;
   int             numOfThreads;
   pthread_t *     qthread;
-  SSchedMsg *     queue;
+  SSchedMsg *     queueHead;
+  SSchedMsg *     queueTail;
+  int             numOfMsgs;
   
   void*           pTmrCtrl;
   void*           pTimer;
@@ -49,6 +51,7 @@ void *taosInitScheduler(int queueSize, int numOfThreads, const char *label) {
 
   memset(pSched, 0, sizeof(SSchedQueue));
   pSched->queueSize = queueSize;
+  pSched->numOfMsgs = 0;
   strncpy(pSched->label, label, sizeof(pSched->label)); // fix buffer overflow
   pSched->label[sizeof(pSched->label)-1] = '\0';
 
@@ -67,14 +70,8 @@ void *taosInitScheduler(int queueSize, int numOfThreads, const char *label) {
     goto _error;
   }
 
-  if ((pSched->queue = (SSchedMsg *)malloc((size_t)pSched->queueSize * sizeof(SSchedMsg))) == NULL) {
-    pError("%s: no enough memory for queue, reason:%s", pSched->label, strerror(errno));
-    goto _error;
-  }
-
-  memset(pSched->queue, 0, (size_t)pSched->queueSize * sizeof(SSchedMsg));
-  pSched->fullSlot = 0;
-  pSched->emptySlot = 0;
+  pSched->queueHead = NULL;
+  pSched->queueTail = NULL;
 
   pSched->qthread = malloc(sizeof(pthread_t) * (size_t)numOfThreads);
   if (pSched->qthread == NULL) {
@@ -114,7 +111,7 @@ void *taosInitSchedulerWithInfo(int queueSize, int numOfThreads, const char *lab
 }
 
 void *taosProcessSchedQueue(void *param) {
-  SSchedMsg    msg;
+  SSchedMsg   *pMsg;
   SSchedQueue *pSched = (SSchedQueue *)param;
 
   while (1) {
@@ -130,9 +127,19 @@ void *taosProcessSchedQueue(void *param) {
     if (pthread_mutex_lock(&pSched->queueMutex) != 0)
       pError("lock %s queueMutex failed, reason:%s", pSched->label, strerror(errno));
 
-    msg = pSched->queue[pSched->fullSlot];
-    memset(pSched->queue + pSched->fullSlot, 0, sizeof(SSchedMsg));
-    pSched->fullSlot = (pSched->fullSlot + 1) % pSched->queueSize;
+    assert(pSched->queueHead != NULL);
+
+    pMsg = pSched->queueHead;
+    if (pSched->numOfMsgs == 1) {
+      pSched->queueHead = NULL;
+      pSched->queueTail = NULL;
+    } else {
+      pSched->queueHead = pMsg->next;
+    }
+
+    pSched->numOfMsgs--;
+    // memset(pSched->queue + pSched->fullSlot, 0, sizeof(SSchedMsg));
+    // pSched->fullSlot = (pSched->fullSlot + 1) % pSched->queueSize;
 
     if (pthread_mutex_unlock(&pSched->queueMutex) != 0)
       pError("unlock %s queueMutex failed, reason:%s\n", pSched->label, strerror(errno));
@@ -140,10 +147,12 @@ void *taosProcessSchedQueue(void *param) {
     if (tsem_post(&pSched->emptySem) != 0)
       pError("post %s emptySem failed, reason:%s\n", pSched->label, strerror(errno));
 
-    if (msg.fp)
-      (*(msg.fp))(&msg);
-    else if (msg.tfp)
-      (*(msg.tfp))(msg.ahandle, msg.thandle);
+    if (pMsg->fp)
+      (*(pMsg->fp))(pMsg);
+    else if (pMsg->tfp)
+      (*(pMsg->tfp))(pMsg->ahandle, pMsg->thandle);
+
+    free(pMsg);
   }
 
   return NULL;
@@ -156,6 +165,15 @@ int taosScheduleTask(void *qhandle, SSchedMsg *pMsg) {
     return 0;
   }
 
+  SSchedMsg *pMsgNode = (SSchedMsg *)malloc(sizeof(SSchedMsg));
+  if (pMsgNode == NULL) {
+    pError("Failed to allocate memory, size:%d", sizeof(SSchedMsg));
+    return -1;
+  }
+
+  *pMsgNode = *pMsg;
+  pMsgNode->next = NULL;
+
   while (tsem_wait(&pSched->emptySem) != 0) {
     if (errno != EINTR) {
       pError("wait %s emptySem failed, reason:%s", pSched->label, strerror(errno));
@@ -167,8 +185,19 @@ int taosScheduleTask(void *qhandle, SSchedMsg *pMsg) {
   if (pthread_mutex_lock(&pSched->queueMutex) != 0)
     pError("lock %s queueMutex failed, reason:%s", pSched->label, strerror(errno));
 
-  pSched->queue[pSched->emptySlot] = *pMsg;
-  pSched->emptySlot = (pSched->emptySlot + 1) % pSched->queueSize;
+  if (pSched->queueHead == NULL) { // empty queue
+    pSched->queueHead = pMsgNode;
+    pSched->queueTail = pMsgNode;
+  } else {
+    SSchedMsg *pTailNode = pSched->queueTail;
+    pTailNode->next = pMsgNode;
+    pSched->queueTail = pMsgNode;
+  }
+
+  pSched->numOfMsgs++;
+
+  // pSched->queue[pSched->emptySlot] = *pMsg;
+  // pSched->emptySlot = (pSched->emptySlot + 1) % pSched->queueSize;
 
   if (pthread_mutex_unlock(&pSched->queueMutex) != 0)
     pError("unlock %s queueMutex failed, reason:%s", pSched->label, strerror(errno));
@@ -197,7 +226,7 @@ void taosCleanUpScheduler(void *param) {
     taosTmrStopA(&pSched->pTimer);
   }
 
-  free(pSched->queue);
+  // free(pSched->queue);
   free(pSched->qthread);
   free(pSched); // fix memory leak
 }
@@ -209,9 +238,9 @@ void taosDumpSchedulerStatus(void *qhandle, void *tmrId) {
     return;
   }
   
-  int32_t size = ((pSched->emptySlot - pSched->fullSlot) + pSched->queueSize) % pSched->queueSize;
-  if (size > 0) {
-    pTrace("scheduler:%s, current tasks in queue:%d, task thread:%d", pSched->label, size, pSched->numOfThreads);
+  // int32_t size = ((pSched->emptySlot - pSched->fullSlot) + pSched->queueSize) % pSched->queueSize;
+  if (pSched->numOfMsgs > 0) {
+    pTrace("scheduler:%s, current tasks in queue:%d, task thread:%d", pSched->label, pSched->numOfMsgs, pSched->numOfThreads);
   }
   
   taosTmrReset(taosDumpSchedulerStatus, DUMP_SCHEDULER_TIME_WINDOW, pSched, pSched->pTmrCtrl, &pSched->pTimer);
