@@ -9,7 +9,7 @@ IF (TD_MVN_INSTALLED)
     POST_BUILD
     COMMAND mvn -Dmaven.test.skip=true install -f ${CMAKE_CURRENT_SOURCE_DIR}/pom.xml
     # oem begin
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/target/taos-jdbcdriver-1.0.2-dist.jar ${LIBRARY_OUTPUT_PATH}/power-jdbcdriver-1.0.2-dist.jar
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/target/power-jdbcdriver-1.0.2-dist.jar ${LIBRARY_OUTPUT_PATH}/power-jdbcdriver-1.0.2-dist.jar
     # oem end
     COMMAND mvn -Dmaven.test.skip=true clean -f ${CMAKE_CURRENT_SOURCE_DIR}/pom.xml
     COMMENT "build jdbc driver")

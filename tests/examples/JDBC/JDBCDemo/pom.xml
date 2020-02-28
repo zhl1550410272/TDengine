@@ -37,6 +37,9 @@
                     <descriptorRefs>
                         <descriptorRef>jar-with-dependencies</descriptorRef>
                     </descriptorRefs>
+                    <descriptors>
+                        <descriptor>src/main/assembly/assembly-jar.xml</descriptor>
+                    </descriptors>
                 </configuration>
                 <executions>
                     <execution>
@@ -61,8 +64,8 @@
 
     <dependencies>
         <dependency>
-            <groupId>power</groupId>
-            <artifactId>jdbcdriver</artifactId>
+            <groupId>com.power.jdbc</groupId>
+            <artifactId>power-jdbcdriver</artifactId>
             <version>1.0.2-dist</version>
             <scope>system</scope>
             <systemPath>/usr/local/power/connector/power-jdbcdriver-1.0.2-dist.jar</systemPath>
