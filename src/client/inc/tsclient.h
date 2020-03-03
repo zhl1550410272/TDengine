@@ -81,7 +81,6 @@ typedef struct SFieldInfo {
   int16_t     numOfOutputCols;  // number of column in result
   int16_t     numOfAlloc;       // allocated size
   TAOS_FIELD *pFields;
-//  short *     pOffset;
 
   /*
    * define if this column is belong to the queried result, it may be add by parser to faciliate
@@ -235,7 +234,6 @@ typedef struct {
 
   union {
     bool   existsCheck;     // check if the table exists or not
-    bool   inStream;        // denote if current sql is executed in stream or not
     bool   createOnDemand;  // if the table is missing, on-the-fly create it. during getmeterMeta
     int8_t dataSourceType;  // load data from file or not
   };
@@ -448,6 +446,7 @@ int32_t tscInvalidSQLErrMsg(char *msg, const char *additionalInfo, const char *s
 int32_t tscToSQLCmd(SSqlObj *pSql, struct SSqlInfo *pInfo);
 
 void tscQueueAsyncFreeResult(SSqlObj *pSql);
+void doAsyncQuery(STscObj* pObj, SSqlObj* pSql, void (*fp)(), void* param, const char* sqlstr, int32_t sqlLen);
 
 extern void *     pVnodeConn;
 extern void *     pTscMgmtConn;

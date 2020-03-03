@@ -1459,7 +1459,7 @@ static SWindowResult *doSetTimeWindowFromKey(SQueryRuntimeEnv *pRuntimeEnv, SWin
                                              int16_t bytes) {
   SQuery *pQuery = pRuntimeEnv->pQuery;
 
-  int32_t *p1 = (int32_t *)taosGetDataFromHashTable(pWindowResInfo->hashList, pData, bytes);
+  int32_t *p1 = (int32_t *)taosHashGet(pWindowResInfo->hashList, pData, bytes);
   if (p1 != NULL) {
     pWindowResInfo->curIndex = *p1;
   } else {  // more than the capacity, reallocate the resources
@@ -1484,7 +1484,7 @@ static SWindowResult *doSetTimeWindowFromKey(SQueryRuntimeEnv *pRuntimeEnv, SWin
 
     // add a new result set for a new group
     pWindowResInfo->curIndex = pWindowResInfo->size++;
-    taosAddToHashTable(pWindowResInfo->hashList, pData, bytes, (char *)&pWindowResInfo->curIndex, sizeof(int32_t));
+    taosHashAdd(pWindowResInfo->hashList, pData, bytes, (char *)&pWindowResInfo->curIndex, sizeof(int32_t));
   }
 
   return getWindowResult(pWindowResInfo, pWindowResInfo->curIndex);
@@ -2030,7 +2030,7 @@ int32_t initWindowResInfo(SWindowResInfo *pWindowResInfo, SQueryRuntimeEnv *pRun
   pWindowResInfo->type = type;
 
   _hash_fn_t fn = taosGetDefaultHashFunction(type);
-  pWindowResInfo->hashList = taosInitHashTable(threshold, fn, false);
+  pWindowResInfo->hashList = taosHashInit(threshold, fn, false);
 
   pWindowResInfo->curIndex = -1;
   pWindowResInfo->size = 0;
@@ -2056,7 +2056,7 @@ void cleanupTimeWindowInfo(SWindowResInfo *pWindowResInfo, int32_t numOfCols) {
     destroyTimeWindowRes(pResult, numOfCols);
   }
 
-  taosCleanUpHashTable(pWindowResInfo->hashList);
+  taosHashCleanup(pWindowResInfo->hashList);
   tfree(pWindowResInfo->pResult);
 }
 
@@ -2071,11 +2071,11 @@ void resetTimeWindowInfo(SQueryRuntimeEnv *pRuntimeEnv, SWindowResInfo *pWindowR
   }
 
   pWindowResInfo->curIndex = -1;
-  taosCleanUpHashTable(pWindowResInfo->hashList);
+  taosHashCleanup(pWindowResInfo->hashList);
   pWindowResInfo->size = 0;
 
   _hash_fn_t fn = taosGetDefaultHashFunction(pWindowResInfo->type);
-  pWindowResInfo->hashList = taosInitHashTable(pWindowResInfo->capacity, fn, false);
+  pWindowResInfo->hashList = taosHashInit(pWindowResInfo->capacity, fn, false);
 
   pWindowResInfo->startTime = 0;
   pWindowResInfo->prevSKey = 0;
@@ -2093,7 +2093,7 @@ void clearFirstNTimeWindow(SQueryRuntimeEnv *pRuntimeEnv, int32_t num) {
   for (int32_t i = 0; i < num; ++i) {
     SWindowResult *pResult = &pWindowResInfo->pResult[i];
     if (pResult->status.closed) {  // remove the window slot from hash table
-      taosDeleteFromHashTable(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
+      taosHashDelete(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
     } else {
       break;
     }
@@ -2116,14 +2116,14 @@ void clearFirstNTimeWindow(SQueryRuntimeEnv *pRuntimeEnv, int32_t num) {
 
   for (int32_t k = 0; k < pWindowResInfo->size; ++k) {
     SWindowResult *pResult = &pWindowResInfo->pResult[k];
-    int32_t *p = (int32_t *)taosGetDataFromHashTable(pWindowResInfo->hashList, (const char *)&pResult->window.skey,
+    int32_t *p = (int32_t *)taosHashGet(pWindowResInfo->hashList, (const char *)&pResult->window.skey,
                                                      TSDB_KEYSIZE);
     int32_t  v = (*p - num);
     assert(v >= 0 && v <= pWindowResInfo->size);
 
     // todo add the update function for hash table
-    taosDeleteFromHashTable(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
-    taosAddToHashTable(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE, (char *)&v,
+    taosHashDelete(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
+    taosHashAdd(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE, (char *)&v,
                        sizeof(int32_t));
   }
 
@@ -4830,7 +4830,7 @@ void vnodeQueryFreeQInfoEx(SQInfo *pQInfo) {
   tfree(pSupporter->pMeterSidExtInfo);
 
   if (pSupporter->pMetersHashTable != NULL) {
-    taosCleanUpHashTable(pSupporter->pMetersHashTable);
+    taosHashCleanup(pSupporter->pMetersHashTable);
     pSupporter->pMetersHashTable = NULL;
   }
 

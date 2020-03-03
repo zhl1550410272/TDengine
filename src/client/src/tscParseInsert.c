@@ -1002,7 +1002,7 @@ int doParseInsertSql(SSqlObj *pSql, char *str) {
       || ((NULL != pSql->asyncTblPos) && (NULL != pSql->pTableHashList)));
 
   if ((NULL == pSql->asyncTblPos) && (NULL == pSql->pTableHashList)) {
-    pSql->pTableHashList = taosInitHashTable(128, taosGetDefaultHashFunction(TSDB_DATA_TYPE_BIGINT), false);
+    pSql->pTableHashList = taosHashInit(128, taosGetDefaultHashFunction(TSDB_DATA_TYPE_BIGINT), false);
 
     pSql->cmd.pDataBlocks = tscCreateBlockArrayList();
     if (NULL == pSql->pTableHashList || NULL == pSql->cmd.pDataBlocks) {
@@ -1240,15 +1240,15 @@ int doParseInsertSql(SSqlObj *pSql, char *str) {
       goto _error_clean;
     }
 
-    STableDataBlocks *pDataBlock = pCmd->pDataBlocks->pData[0];
-    if ((code = tscCopyDataBlockToPayload(pSql, pDataBlock)) != TSDB_CODE_SUCCESS) {
-      goto _error_clean;
-    }
+//    STableDataBlocks *pDataBlock = pCmd->pDataBlocks->pData[0];
+//    if ((code = tscCopyDataBlockToPayload(pSql, pDataBlock)) != TSDB_CODE_SUCCESS) {
+//      goto _error_clean;
+//    }
 
-    pMeterMetaInfo = tscGetMeterMetaInfo(&pSql->cmd, 0, 0);
+//    pMeterMetaInfo = tscGetMeterMetaInfo(&pSql->cmd, 0, 0);
 
     // set the next sent data vnode index in data block arraylist
-    pMeterMetaInfo->vnodeIndex = 1;
+//    pMeterMetaInfo->vnodeIndex = 1;
   } else {
     pCmd->pDataBlocks = tscDestroyBlockArrayList(pCmd->pDataBlocks);
   }
@@ -1260,7 +1260,7 @@ _error_clean:
   pCmd->pDataBlocks = tscDestroyBlockArrayList(pCmd->pDataBlocks);
 
 _clean:
-  taosCleanUpHashTable(pSql->pTableHashList);
+  taosHashCleanup(pSql->pTableHashList);
   
   pSql->pTableHashList = NULL;
   pSql->asyncTblPos    = NULL;
@@ -1314,11 +1314,10 @@ int tsParseSql(SSqlObj *pSql, bool multiVnodeInsertion) {
      * the error handle callback function can rightfully restore the user defined function (fp)
      */
     if (pSql->fp != NULL && multiVnodeInsertion) {
-      assert(pSql->fetchFp == NULL);
       pSql->fetchFp = pSql->fp;
 
       // replace user defined callback function with multi-insert proxy function
-      pSql->fp = tscAsyncInsertMultiVnodesProxy;
+      pSql->fp = launchMultivnodeInsert;
     }
 
     ret = tsParseInsertSql(pSql);

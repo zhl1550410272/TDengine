@@ -253,11 +253,11 @@ static void* KeywordHashTable = NULL;
 static void doInitKeywordsTable() {
   int numOfEntries = tListLen(keywordTable);
   
-  KeywordHashTable = taosInitHashTable(numOfEntries, MurmurHash3_32, false);
+  KeywordHashTable = taosHashInit(numOfEntries, MurmurHash3_32, false);
   for (int32_t i = 0; i < numOfEntries; i++) {
     keywordTable[i].len = strlen(keywordTable[i].name);
     void* ptr = &keywordTable[i];
-    taosAddToHashTable(KeywordHashTable, keywordTable[i].name, keywordTable[i].len, (void*)&ptr, POINTER_BYTES);
+    taosHashAdd(KeywordHashTable, keywordTable[i].name, keywordTable[i].len, (void*)&ptr, POINTER_BYTES);
   }
 }
 
@@ -275,7 +275,7 @@ int tSQLKeywordCode(const char* z, int n) {
     }
   }
 
-  SKeyword** pKey = (SKeyword**)taosGetDataFromHashTable(KeywordHashTable, key, n);
+  SKeyword** pKey = (SKeyword**)taosHashGet(KeywordHashTable, key, n);
   if (pKey != NULL) {
     return (*pKey)->type;
   } else {

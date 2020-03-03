@@ -651,8 +651,8 @@ void *vnodeQueryOnSingleTable(SMeterObj **pMetersObj, SSqlGroupbyExpr *pGroupbyE
     STableQuerySupportObj *pSupporter = (STableQuerySupportObj *)calloc(1, sizeof(STableQuerySupportObj));
     pSupporter->numOfMeters = 1;
 
-    pSupporter->pMetersHashTable = taosInitHashTable(pSupporter->numOfMeters, taosIntHash_32, false);
-    taosAddToHashTable(pSupporter->pMetersHashTable, (const char*) &pMetersObj[0]->sid, sizeof(pMeterObj[0].sid),
+    pSupporter->pMetersHashTable = taosHashInit(pSupporter->numOfMeters, taosIntHash_32, false);
+    taosHashAdd(pSupporter->pMetersHashTable, (const char*) &pMetersObj[0]->sid, sizeof(pMeterObj[0].sid),
         (char *)&pMetersObj[0], POINTER_BYTES);
 
     pSupporter->pSidSet = NULL;
@@ -742,9 +742,9 @@ void *vnodeQueryOnMultiMeters(SMeterObj **pMetersObj, SSqlGroupbyExpr *pGroupbyE
   STableQuerySupportObj *pSupporter = (STableQuerySupportObj *)calloc(1, sizeof(STableQuerySupportObj));
   pSupporter->numOfMeters = pQueryMsg->numOfSids;
 
-  pSupporter->pMetersHashTable = taosInitHashTable(pSupporter->numOfMeters, taosIntHash_32, false);
+  pSupporter->pMetersHashTable = taosHashInit(pSupporter->numOfMeters, taosIntHash_32, false);
   for (int32_t i = 0; i < pSupporter->numOfMeters; ++i) {
-    taosAddToHashTable(pSupporter->pMetersHashTable, (const char*) &pMetersObj[i]->sid, sizeof(pMetersObj[i]->sid), (char *)&pMetersObj[i],
+    taosHashAdd(pSupporter->pMetersHashTable, (const char*) &pMetersObj[i]->sid, sizeof(pMetersObj[i]->sid), (char *)&pMetersObj[i],
                        POINTER_BYTES);
   }
 

@@ -119,7 +119,7 @@ typedef enum {
 typedef int (*__block_search_fn_t)(char* data, int num, int64_t key, int order);
 
 static FORCE_INLINE SMeterObj* getMeterObj(void* hashHandle, int32_t sid) {
-  return *(SMeterObj**)taosGetDataFromHashTable(hashHandle, (const char*)&sid, sizeof(sid));
+  return *(SMeterObj**)taosHashGet(hashHandle, (const char*)&sid, sizeof(sid));
 }
 
 bool isQueryKilled(SQuery* pQuery);

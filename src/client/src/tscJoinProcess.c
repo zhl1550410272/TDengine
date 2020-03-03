@@ -794,12 +794,12 @@ void tscJoinQueryCallback(void* param, TAOS_RES* tres, int code) {
           pSql->cmd.command = TSDB_SQL_FETCH;
           tscProcessSql(pSql);
         } else {  // first retrieve from vnode during the secondary stage sub-query
-          if (pParentSql->fp == NULL) {
-            tsem_wait(&pParentSql->emptyRspSem);
-            tsem_wait(&pParentSql->emptyRspSem);
-
-            tsem_post(&pParentSql->rspSem);
-          } else {
+//          if (pParentSql->fp == NULL) {
+//            tsem_wait(&pParentSql->emptyRspSem);
+//            tsem_wait(&pParentSql->emptyRspSem);
+//
+//            tsem_post(&pParentSql->rspSem);
+//          } else {
             // set the command flag must be after the semaphore been correctly set.
             //    pPObj->cmd.command = TSDB_SQL_RETRIEVE_METRIC;
             //    if (pPObj->res.code == TSDB_CODE_SUCCESS) {
@@ -812,7 +812,7 @@ void tscJoinQueryCallback(void* param, TAOS_RES* tres, int code) {
         }
       }
     }
-  }
+//  }
 }
 
 static int32_t getDataStartOffset() {

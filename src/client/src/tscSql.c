@@ -149,6 +149,8 @@ TAOS *taos_connect_imp(const char *ip, const char *user, const char *pass, const
   return pObj;
 }
 
+
+
 TAOS *taos_connect(const char *ip, const char *user, const char *pass, const char *db, uint16_t port) {
   if (ip == NULL || (ip != NULL && (strcmp("127.0.0.1", ip) == 0 || strcasecmp("localhost", ip) == 0))) {
     ip = tsMasterIp;
@@ -198,7 +200,7 @@ int taos_query_imp(STscObj *pObj, SSqlObj *pSql) {
 
   pSql->asyncTblPos = NULL;
   if (NULL != pSql->pTableHashList) {
-    taosCleanUpHashTable(pSql->pTableHashList);
+    taosHashCleanup(pSql->pTableHashList);
     pSql->pTableHashList = NULL;
   }
 
@@ -231,39 +233,75 @@ int taos_query_imp(STscObj *pObj, SSqlObj *pSql) {
   return pRes->code;
 }
 
+static void queryCallback(void *param, TAOS_RES *tres, int code) {
+  if (code < 0) {
+    printf("error!, code:%d\n", code);
+  }
+  
+  STscObj *pObj = (STscObj *)param;
+  sem_post(&pObj->pSql->rspSem);
+}
+
+static void fetchCallBack(void *param, TAOS_RES *tres, int numOfRows) {
+  STscObj* pObj = (STscObj*) param;
+  tscTrace("%p fetch data from server, numOfRows:%d", pObj->pSql, numOfRows);
+  
+  SSqlObj* pSql = (SSqlObj*) tres;
+  if (numOfRows >= 0) {
+    sem_post(&pSql->rspSem);
+  } else { // set the error code
+    pSql->res.code = numOfRows;
+  }
+}
+
 int taos_query(TAOS *taos, const char *sqlstr) {
   STscObj *pObj = (STscObj *)taos;
   if (pObj == NULL || pObj->signature != pObj) {
     globalCode = TSDB_CODE_DISCONNECTED;
     return TSDB_CODE_DISCONNECTED;
   }
-
-  SSqlObj *pSql = pObj->pSql;
-  SSqlRes *pRes = &pSql->res;
-
-  size_t sqlLen = strlen(sqlstr);
-  if (sqlLen > tsMaxSQLStringLen) {
-    pRes->code =
-        tscInvalidSQLErrMsg(pSql->cmd.payload, "sql too long", NULL);  // set the additional error msg for invalid sql
-    tscError("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(taos), pObj);
-
-    return pRes->code;
+  
+  SSqlObj *pSql = (SSqlObj *)calloc(1, sizeof(SSqlObj));
+  if (pSql == NULL) {
+    tscError("failed to malloc sqlObj");
+    return TSDB_CODE_CLI_OUT_OF_MEMORY;
   }
-
-  taosNotePrintTsc(sqlstr);
-
-  void *sql = realloc(pSql->sqlstr, sqlLen + 1);
-  if (sql == NULL) {
-    pRes->code = TSDB_CODE_CLI_OUT_OF_MEMORY;
-    tscError("%p failed to malloc sql string buffer, reason:%s", pSql, strerror(errno));
-
-    tscError("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(taos), pObj);
-    return pRes->code;
-  }
-
-  pSql->sqlstr = sql;
-  strtolower(pSql->sqlstr, sqlstr);
-  return taos_query_imp(pObj, pSql);
+  
+  pObj->pSql = pSql;
+  tsem_init(&pSql->rspSem, 0, 0);
+  tsem_init(&pSql->emptyRspSem, 0, 1);
+  
+  int32_t sqlLen = strlen(sqlstr);
+  doAsyncQuery(pObj, pObj->pSql, queryCallback, taos, sqlstr, sqlLen);
+  
+//  SSqlObj *pSql = pObj->pSql;
+  sem_wait(&pSql->rspSem);
+  return pSql->res.code;
+//  SSqlRes *pRes = &pSql->res;
+//
+//  size_t sqlLen = strlen(sqlstr);
+//  if (sqlLen > tsMaxSQLStringLen) {
+//    pRes->code =
+//        tscInvalidSQLErrMsg(pSql->cmd.payload, "sql too long", NULL);  // set the additional error msg for invalid sql
+//    tscError("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(taos), pObj);
+//
+//    return pRes->code;
+//  }
+//
+//  taosNotePrintTsc(sqlstr);
+//
+//  void *sql = realloc(pSql->sqlstr, sqlLen + 1);
+//  if (sql == NULL) {
+//    pRes->code = TSDB_CODE_CLI_OUT_OF_MEMORY;
+//    tscError("%p failed to malloc sql string buffer, reason:%s", pSql, strerror(errno));
+//
+//    tscError("%p SQL result:%d, %s pObj:%p", pSql, pRes->code, taos_errstr(taos), pObj);
+//    return pRes->code;
+//  }
+//
+//  pSql->sqlstr = sql;
+//  strtolower(pSql->sqlstr, sqlstr);
+//  return taos_query_imp(pObj, pSql);
 }
 
 TAOS_RES *taos_use_result(TAOS *taos) {
@@ -666,13 +704,26 @@ TAOS_ROW taos_fetch_row_impl(TAOS_RES *res) {
 
 TAOS_ROW taos_fetch_row(TAOS_RES *res) {
   SSqlObj *pSql = (SSqlObj *)res;
-  SSqlCmd *pCmd = &pSql->cmd;
-
   if (pSql == NULL || pSql->signature != pSql) {
     globalCode = TSDB_CODE_DISCONNECTED;
     return NULL;
   }
-
+  
+  SSqlCmd *pCmd = &pSql->cmd;
+  SSqlRes *pRes = &pSql->res;
+  
+  if (pRes->qhandle == 0 || pCmd->command == TSDB_SQL_RETRIEVE_EMPTY_RESULT || pCmd->command == TSDB_SQL_INSERT) {
+    return NULL;
+  }
+  
+  // current data are exhausted, fetch more data
+  if (pRes->data == NULL || (pRes->data != NULL && pRes->row >= pRes->numOfRows && pCmd->command == TSDB_SQL_RETRIEVE)) {
+    taos_fetch_rows_a(res, fetchCallBack, pSql->pTscObj);
+    sem_wait(&pSql->rspSem);
+  }
+  
+  return doSetResultRowData(pSql);
+  
   /*
    * projection query on super table, access each virtual node sequentially retrieve data from vnode list,
    * instead of two-stage merge
@@ -764,7 +815,12 @@ void taos_free_result_imp(TAOS_RES *res, int keepCmd) {
     tscTrace("%p qhandle is null, abort free, fp:%p", pSql, pSql->fp);
     if (pSql->fp != NULL) {
       pSql->thandle = NULL;
-      tscFreeSqlObj(pSql);
+      STscObj* pObj = pSql->pTscObj;
+      
+      if (pSql == pObj->pSql) {
+        pObj->pSql = NULL;
+        tscFreeSqlObj(pSql);
+      }
       tscTrace("%p Async SqlObj is freed by app", pSql);
     } else if (keepCmd) {
       tscFreeSqlResult(pSql);
@@ -801,7 +857,7 @@ void taos_free_result_imp(TAOS_RES *res, int keepCmd) {
         pSql->pStream == NULL && pMeterMetaInfo->pMeterMeta != NULL))) {
     pCmd->command = (pCmd->command > TSDB_SQL_MGMT) ? TSDB_SQL_RETRIEVE : TSDB_SQL_FETCH;
 
-    tscTrace("%p code:%d, numOfRows:%d, command:%d", pSql, pRes->code, pRes->numOfRows, pCmd->command);
+    tscTrace("%p code:%d, numOfRows:%d, command:%d, fp:%p", pSql, pRes->code, pRes->numOfRows, pCmd->command, pSql->fp);
 
     void *fp = pSql->fp;
     if (fp != NULL) {
@@ -832,12 +888,18 @@ void taos_free_result_imp(TAOS_RES *res, int keepCmd) {
         tscFreeSqlObjPartial(pSql);
         tscTrace("%p sql result is freed by app", pSql);
       }
+    } else {  // for async release, remove its link
+      STscObj* pObj = pSql->pTscObj;
+      if (pObj->pSql == pSql) {
+        pObj->pSql = NULL;
+      }
     }
   } else {
     // if no free resource msg is sent to vnode, we free this object immediately.
     pSql->thandle = NULL;
-
-    if (pSql->fp) {
+    STscObj* pObj = pSql->pTscObj;
+    
+    if (pSql->fp && pSql != pObj->pSql) {
       assert(pRes->numOfRows == 0 || (pCmd->command > TSDB_SQL_LOCAL));
       tscFreeSqlObj(pSql);
       tscTrace("%p Async sql result is freed by app", pSql);
@@ -1055,7 +1117,7 @@ int taos_validate_sql(TAOS *taos, const char *sql) {
 
   pSql->asyncTblPos = NULL;
   if (NULL != pSql->pTableHashList) {
-    taosCleanUpHashTable(pSql->pTableHashList);
+    taosHashCleanup(pSql->pTableHashList);
     pSql->pTableHashList = NULL;
   }
 
@@ -1167,7 +1229,7 @@ int taos_load_table_info(TAOS *taos, const char *tableNameList) {
 
   pRes->code = 0;
 
-  assert(pSql->fp == NULL);
+//  assert(pSql->fp == NULL);
   tscTrace("%p tableNameList: %s pObj:%p", pSql, tableNameList, pObj);
 
   int32_t tblListLen = strlen(tableNameList);

@@ -461,8 +461,11 @@ void tscFreeSqlObjPartial(SSqlObj* pSql) {
   tscFreeSqlResult(pSql);
   tfree(pSql->pSubs);
   pSql->numOfSubs = 0;
+  pSql->freed = 0;
 
   tscFreeSqlCmdData(pCmd);
+  
+  tscTrace("%p free sqlObj partial completed", pSql);
 }
 
 void tscFreeSqlObj(SSqlObj* pSql) {
@@ -481,10 +484,10 @@ void tscFreeSqlObj(SSqlObj* pSql) {
 
   pCmd->allocSize = 0;
 
-  if (pSql->fp == NULL) {
-    tsem_destroy(&pSql->rspSem);
-    tsem_destroy(&pSql->emptyRspSem);
-  }
+//  if (pSql->fp == NULL) {
+//    tsem_destroy(&pSql->rspSem);
+//    tsem_destroy(&pSql->emptyRspSem);
+//  }
   free(pSql);
 }
 
@@ -669,7 +672,7 @@ int32_t tscGetDataBlockFromList(void* pHashList, SDataBlockList* pDataBlockList,
                                 STableDataBlocks** dataBlocks) {
   *dataBlocks = NULL;
 
-  STableDataBlocks** t1 = (STableDataBlocks**)taosGetDataFromHashTable(pHashList, (const char*)&id, sizeof(id));
+  STableDataBlocks** t1 = (STableDataBlocks**)taosHashGet(pHashList, (const char*)&id, sizeof(id));
   if (t1 != NULL) {
     *dataBlocks = *t1;
   }
@@ -680,7 +683,7 @@ int32_t tscGetDataBlockFromList(void* pHashList, SDataBlockList* pDataBlockList,
       return ret;
     }
 
-    taosAddToHashTable(pHashList, (const char*)&id, sizeof(int64_t), (char*)dataBlocks, POINTER_BYTES);
+    taosHashAdd(pHashList, (const char*)&id, sizeof(int64_t), (char*)dataBlocks, POINTER_BYTES);
     tscAppendDataBlock(pDataBlockList, *dataBlocks);
   }
 
@@ -690,7 +693,7 @@ int32_t tscGetDataBlockFromList(void* pHashList, SDataBlockList* pDataBlockList,
 int32_t tscMergeTableDataBlocks(SSqlObj* pSql, SDataBlockList* pTableDataBlockList) {
   SSqlCmd* pCmd = &pSql->cmd;
 
-  void* pVnodeDataBlockHashList = taosInitHashTable(128, taosGetDefaultHashFunction(TSDB_DATA_TYPE_BIGINT), false);
+  void* pVnodeDataBlockHashList = taosHashInit(128, taosGetDefaultHashFunction(TSDB_DATA_TYPE_BIGINT), false);
   SDataBlockList* pVnodeDataBlockList = tscCreateBlockArrayList();
 
   for (int32_t i = 0; i < pTableDataBlockList->nSize; ++i) {
@@ -702,7 +705,7 @@ int32_t tscMergeTableDataBlocks(SSqlObj* pSql, SDataBlockList* pTableDataBlockLi
                                 tsInsertHeadSize, 0, pOneTableBlock->meterId, pOneTableBlock->pMeterMeta, &dataBuf);
     if (ret != TSDB_CODE_SUCCESS) {
       tscError("%p failed to prepare the data block buffer for merging table data, code:%d", pSql, ret);
-      taosCleanUpHashTable(pVnodeDataBlockHashList);
+      taosHashCleanup(pVnodeDataBlockHashList);
       tscDestroyBlockArrayList(pVnodeDataBlockList);
       return ret;
     }
@@ -720,7 +723,7 @@ int32_t tscMergeTableDataBlocks(SSqlObj* pSql, SDataBlockList* pTableDataBlockLi
       } else {  // failed to allocate memory, free already allocated memory and return error code
         tscError("%p failed to allocate memory for merging submit block, size:%d", pSql, dataBuf->nAllocSize);
 
-        taosCleanUpHashTable(pVnodeDataBlockHashList);
+        taosHashCleanup(pVnodeDataBlockHashList);
         tfree(dataBuf->pData);
         tscDestroyBlockArrayList(pVnodeDataBlockList);
 
@@ -753,7 +756,7 @@ int32_t tscMergeTableDataBlocks(SSqlObj* pSql, SDataBlockList* pTableDataBlockLi
   pCmd->pDataBlocks = pVnodeDataBlockList;
 
   tscFreeUnusedDataBlocks(pCmd->pDataBlocks);
-  taosCleanUpHashTable(pVnodeDataBlockHashList);
+  taosHashCleanup(pVnodeDataBlockHashList);
 
   return TSDB_CODE_SUCCESS;
 }
@@ -1657,7 +1660,7 @@ void tscCleanSqlCmd(SSqlCmd* pCmd) {
  * If connection need to be recycled, the SqlObj also should be freed.
  */
 bool tscShouldFreeAsyncSqlObj(SSqlObj* pSql) {
-  if (pSql == NULL || pSql->signature != pSql || pSql->fp == NULL) {
+  if (pSql == NULL || pSql->signature != pSql/* || pSql->fp == NULL*/) {
     return false;
   }
 
@@ -2071,8 +2074,6 @@ SSqlObj* createSubqueryObj(SSqlObj* pSql, int16_t tableIndex, void (*fp)(), void
 
 void tscDoQuery(SSqlObj* pSql) {
   SSqlCmd* pCmd = &pSql->cmd;
-  void*    fp = pSql->fp;
-  
   pSql->res.code = TSDB_CODE_SUCCESS;
   
   if (pCmd->command > TSDB_SQL_LOCAL) {
@@ -2087,7 +2088,6 @@ void tscDoQuery(SSqlObj* pSql) {
     } else {
       // pSql may be released in this function if it is a async insertion.
       tscProcessSql(pSql);
-      if (NULL == fp) tscProcessMultiVnodesInsert(pSql);
     }
   }
 }
