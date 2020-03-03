@@ -96,7 +96,7 @@
 
 // typedef struct SInsertSupporter {
 //    int32_t         numOfEntries;
-//    tSkipList*      pSkipList;
+//    SSkipList*      pSkipList;
 //    SLoserTreeInfo* pTree;
 //} SInsertSupporter;
 //
@@ -181,7 +181,7 @@ int32_t tHistogramAdd(SHistogramInfo** pHisto, double val) {
     histogramCreateBin(*pHisto, idx, val);
   }
 #else
-  tSkipListKey key = tSkipListCreateKey(TSDB_DATA_TYPE_DOUBLE, &val, tDataTypeDesc[TSDB_DATA_TYPE_DOUBLE].nSize);
+  SSkipListKey key = tSkipListCreateKey(TSDB_DATA_TYPE_DOUBLE, &val, tDataTypeDesc[TSDB_DATA_TYPE_DOUBLE].nSize);
   SHistBin*    entry = calloc(1, sizeof(SHistBin));
   entry->val = val;
 
@@ -213,9 +213,9 @@ int32_t tHistogramAdd(SHistogramInfo** pHisto, double val) {
           tLoserTreeAdjust(pTree, pEntry1->index + pTree->numOfEntries);
         }
 
-        tSkipListKey kx =
+        SSkipListKey kx =
             tSkipListCreateKey(TSDB_DATA_TYPE_DOUBLE, &(*pHisto)->max, tDataTypeDesc[TSDB_DATA_TYPE_DOUBLE].nSize);
-        pLast = tSkipListGetOne((*pHisto)->pList, &kx);
+        pLast = tSkipListGet((*pHisto)->pList, &kx);
       }
     } else {
       /* this node located at the last position of the skiplist, we do not

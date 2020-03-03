@@ -25,13 +25,13 @@ extern "C" {
 #define TARRAY_MIN_SIZE 8
 #define TARRAY_GET_ELEM(array, index) ((array)->pData + (index) * (array)->elemSize)
 
-typedef struct tArray {
+typedef struct SArray {
   size_t size;
   size_t capacity;
   size_t elemSize;
 
   void* pData;
-} tArray;
+} SArray;
 
 /**
  *
@@ -47,13 +47,13 @@ void* taosArrayInit(size_t size, size_t elemSize);
  * @param pData
  * @return
  */
-void* taosArrayPush(tArray* pArray, void* pData);
+void* taosArrayPush(SArray* pArray, void* pData);
 
 /**
  *
  * @param pArray
  */
-void taosArrayPop(tArray* pArray);
+void taosArrayPop(SArray* pArray);
 
 /**
  *
@@ -61,14 +61,14 @@ void taosArrayPop(tArray* pArray);
  * @param index
  * @return
  */
-void* taosArrayGet(tArray* pArray, size_t index);
+void* taosArrayGet(SArray* pArray, size_t index);
 
 /**
  *
  * @param pArray
  * @return
  */
-size_t taosArrayGetSize(tArray* pArray);
+size_t taosArrayGetSize(SArray* pArray);
 
 /**
  *
@@ -76,13 +76,13 @@ size_t taosArrayGetSize(tArray* pArray);
  * @param index
  * @param pData
  */
-void taosArrayInsert(tArray* pArray, int32_t index, void* pData);
+void taosArrayInsert(SArray* pArray, int32_t index, void* pData);
 
 /**
  *
  * @param pArray
  */
-void taosArrayDestory(tArray* pArray);
+void taosArrayDestory(SArray* pArray);
 
 #ifdef __cplusplus
 }

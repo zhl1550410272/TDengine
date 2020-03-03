@@ -47,7 +47,7 @@ typedef struct SHistogramInfo {
 #if defined(USE_ARRAYLIST)
   SHistBin* elems;
 #else
-  tSkipList*      pList;
+  SSkipList*      pList;
   SLoserTreeInfo* pLoserTree;
   int32_t         maxIndex;
   bool            ordered;

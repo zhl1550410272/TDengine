@@ -13,7 +13,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "tArray.h"
+#include "tarray.h"
 
 void* taosArrayInit(size_t size, size_t elemSize) {
   assert(elemSize > 0);
@@ -22,7 +22,7 @@ void* taosArrayInit(size_t size, size_t elemSize) {
     size = TARRAY_MIN_SIZE;
   }
 
-  tArray* pArray = calloc(1, sizeof(tArray));
+  SArray* pArray = calloc(1, sizeof(SArray));
   if (pArray == NULL) {
     return NULL;
   }
@@ -38,7 +38,7 @@ void* taosArrayInit(size_t size, size_t elemSize) {
   return pArray;
 }
 
-static void taosArrayResize(tArray* pArray) {
+static void taosArrayResize(SArray* pArray) {
   assert(pArray->size >= pArray->capacity);
 
   size_t size = pArray->capacity;
@@ -53,7 +53,7 @@ static void taosArrayResize(tArray* pArray) {
   pArray->capacity = size;
 }
 
-void* taosArrayPush(tArray* pArray, void* pData) {
+void* taosArrayPush(SArray* pArray, void* pData) {
   if (pArray == NULL || pData == NULL) {
     return NULL;
   }
@@ -69,7 +69,7 @@ void* taosArrayPush(tArray* pArray, void* pData) {
   return dst;
 }
 
-void taosArrayPop(tArray* pArray) {
+void taosArrayPop(SArray* pArray) {
   if (pArray == NULL || pArray->size == 0) {
     return;
   }
@@ -77,14 +77,14 @@ void taosArrayPop(tArray* pArray) {
   pArray->size -= 1;
 }
 
-void* taosArrayGet(tArray* pArray, size_t index) {
+void* taosArrayGet(SArray* pArray, size_t index) {
   assert(index < pArray->size);
   return TARRAY_GET_ELEM(pArray, index);
 }
 
-size_t taosArrayGetSize(tArray* pArray) { return pArray->size; }
+size_t taosArrayGetSize(SArray* pArray) { return pArray->size; }
 
-void taosArrayInsert(tArray* pArray, int32_t index, void* pData) {
+void taosArrayInsert(SArray* pArray, int32_t index, void* pData) {
   if (pArray == NULL || pData == NULL) {
     return;
   }
@@ -107,7 +107,7 @@ void taosArrayInsert(tArray* pArray, int32_t index, void* pData) {
   pArray->size += 1;
 }
 
-void taosArrayDestory(tArray* pArray) {
+void taosArrayDestory(SArray* pArray) {
   if (pArray == NULL) {
     return;
   }

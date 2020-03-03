@@ -826,7 +826,7 @@ static void dropAllMetersOfMetric(SDbObj *pDb, STabObj * pMetric, SAcctObj *pAcc
  * create key of each meter for skip list, which is generated from first tag
  * column
  */
-static void createKeyFromTagValue(STabObj *pMetric, STabObj *pMeter, tSkipListKey *pKey) {
+static void createKeyFromTagValue(STabObj *pMetric, STabObj *pMeter, SSkipListKey *pKey) {
   SSchema *     pTagSchema = (SSchema *)(pMetric->schema + pMetric->numOfColumns * sizeof(SSchema));
   const int16_t KEY_COLUMN_OF_TAGS = 0;
 
@@ -847,7 +847,7 @@ static void addMeterIntoMetricIndex(STabObj *pMetric, STabObj *pMeter) {
   }
 
   if (pMetric->pSkipList) {
-    tSkipListKey key = {0};
+    SSkipListKey key = {0};
     createKeyFromTagValue(pMetric, pMeter, &key);
     tSkipListPut(pMetric->pSkipList, pMeter, &key, 1);
 
@@ -860,7 +860,7 @@ static void removeMeterFromMetricIndex(STabObj *pMetric, STabObj *pMeter) {
     return;
   }
 
-  tSkipListKey key = {0};
+  SSkipListKey key = {0};
   createKeyFromTagValue(pMetric, pMeter, &key);
   tSkipListNode **pRes = NULL;
 

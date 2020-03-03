@@ -113,7 +113,7 @@ typedef struct _tab_obj {
   char    updateEnd[1];
 
   pthread_rwlock_t rwLock;
-  tSkipList *      pSkipList;
+  SSkipList *      pSkipList;
   struct _tab_obj *pHead;  // for metric, a link list for all meters created
                            // according to this metric
   char *pTagData;          // TSDB_METER_ID_LEN(metric_name)+

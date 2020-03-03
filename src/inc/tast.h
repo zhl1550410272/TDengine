@@ -29,7 +29,7 @@ extern "C" {
 
 struct tSQLBinaryExpr;
 struct SSchema;
-struct tSkipList;
+struct SSkipList;
 struct tSkipListNode;
 
 enum {
@@ -94,7 +94,7 @@ void tSQLBinaryExprToString(tSQLBinaryExpr *pExpr, char *dst, int32_t *len);
 
 void tSQLBinaryExprDestroy(tSQLBinaryExpr **pExprs, void (*fp)(void*));
 
-void tSQLBinaryExprTraverse(tSQLBinaryExpr *pExprs, struct tSkipList *pSkipList, tQueryResultset *result,
+void tSQLBinaryExprTraverse(tSQLBinaryExpr *pExprs, struct SSkipList *pSkipList, tQueryResultset *result,
                             SBinaryFilterSupp *param);
 
 void tSQLBinaryExprCalcTraverse(tSQLBinaryExpr *pExprs, int32_t numOfRows, char *pOutput, void *param, int32_t order,
