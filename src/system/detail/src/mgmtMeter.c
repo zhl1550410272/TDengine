@@ -826,12 +826,35 @@ static void dropAllMetersOfMetric(SDbObj *pDb, STabObj * pMetric, SAcctObj *pAcc
  * create key of each meter for skip list, which is generated from first tag
  * column
  */
-static void createKeyFromTagValue(STabObj *pMetric, STabObj *pMeter, SSkipListKey *pKey) {
-  SSchema *     pTagSchema = (SSchema *)(pMetric->schema + pMetric->numOfColumns * sizeof(SSchema));
-  const int16_t KEY_COLUMN_OF_TAGS = 0;
+//static void createKeyFromTagValue(STabObj *pMetric, STabObj *pMeter, SSkipListKey *pKey) {
+//  SSchema *     pTagSchema = (SSchema *)(pMetric->schema + pMetric->numOfColumns * sizeof(SSchema));
+//  const int16_t KEY_COLUMN_OF_TAGS = 0;
+//
+//  char *tagVal = pMeter->pTagData + TSDB_METER_ID_LEN;  // tag start position
+//  *pKey = tSkipListCreateKey(pTagSchema[KEY_COLUMN_OF_TAGS].type, tagVal, pTagSchema[KEY_COLUMN_OF_TAGS].bytes);
+//}
 
-  char *tagVal = pMeter->pTagData + TSDB_METER_ID_LEN;  // tag start position
-  *pKey = tSkipListCreateKey(pTagSchema[KEY_COLUMN_OF_TAGS].type, tagVal, pTagSchema[KEY_COLUMN_OF_TAGS].bytes);
+static SSkipListNode* createSkipListNode(STabObj *pMetric, STabObj *pMeter, SSkipList* pSkipList) {
+  SSchema *pTagSchema = (SSchema *)(pMetric->schema + pMetric->numOfColumns * sizeof(SSchema));
+  
+  const int16_t KEY_COLUMN_OF_TAGS = 0;
+  assert(pTagSchema[KEY_COLUMN_OF_TAGS].bytes == pSkipList->keyInfo.len);
+  
+  int32_t level = -1;
+  int32_t size;
+  
+  tSkipListRandNodeInfo(pSkipList, &level, &size);
+  SSkipListNode* pNode = calloc(1, POINTER_BYTES + SL_NODE_HEADER_SIZE(level) + pSkipList->keyInfo.len);
+  pNode->level = level;
+  
+  // set the pointer here
+  ((STabObj**)(SL_GET_NODE_DATA(pNode) + pSkipList->keyInfo.len))[0] = pMeter;
+  
+  return pNode;
+}
+
+static char* getKeyFromDataPayload(const void* pData) {
+  return (char*) pData;
 }
 
 /*
@@ -843,15 +866,12 @@ static void addMeterIntoMetricIndex(STabObj *pMetric, STabObj *pMeter) {
 
   if (pMetric->pSkipList == NULL) {
     pMetric->pSkipList = tSkipListCreate(MAX_SKIP_LIST_LEVEL, pTagSchema[KEY_COLUMN_OF_TAGS].type,
-                    pTagSchema[KEY_COLUMN_OF_TAGS].bytes);
+                    pTagSchema[KEY_COLUMN_OF_TAGS].bytes, 1, true, getKeyFromDataPayload);
   }
 
   if (pMetric->pSkipList) {
-    SSkipListKey key = {0};
-    createKeyFromTagValue(pMetric, pMeter, &key);
-    tSkipListPut(pMetric->pSkipList, pMeter, &key, 1);
-
-    tSkipListDestroyKey(&key);
+    SSkipListNode* pNode = createSkipListNode(pMetric, pMeter, pMetric->pSkipList);
+    tSkipListPut(pMetric->pSkipList, pNode);
   }
 }
 
@@ -860,23 +880,26 @@ static void removeMeterFromMetricIndex(STabObj *pMetric, STabObj *pMeter) {
     return;
   }
 
-  SSkipListKey key = {0};
-  createKeyFromTagValue(pMetric, pMeter, &key);
-  tSkipListNode **pRes = NULL;
+//  SSkipListKey key = {0};
+//  createKeyFromTagValue(pMetric, pMeter, &key);
+//  tSkipListNode **pRes = NULL;
 
-  int32_t num = tSkipListGets(pMetric->pSkipList, &key, &pRes);
-  for (int32_t i = 0; i < num; ++i) {
-    STabObj *pOneMeter = (STabObj *)pRes[i]->pData;
+  SArray* pArray = tSkipListGet(pMetric->pSkipList, pMeter->pTagData, pMetric->pSkipList->keyInfo.type);
+  for (int32_t i = 0; i < taosArrayGetSize(pArray); ++i) {
+    SSkipListNode** pData = taosArrayGet(pArray, i);
+    char* data = SL_GET_NODE_DATA(*pData);
+    
+    STabObj *pOneMeter = (STabObj *)(data + (pMetric->pSkipList->keyInfo.len));
     if (pOneMeter->gid.sid == pMeter->gid.sid && pOneMeter->gid.vgId == pMeter->gid.vgId) {
       assert(pMeter == pOneMeter);
-      tSkipListRemoveNode(pMetric->pSkipList, pRes[i]);
+//      tSkipListRemoveNode(pMetric->pSkipList, pRes[i]);
     }
   }
 
-  tSkipListDestroyKey(&key);
-  if (num != 0) {
-    free(pRes);
-  }
+//  tSkipListDestroyKey(&key);
+//  if (num != 0) {
+//    free(pRes);
+//  }
 }
 
 int mgmtAddMeterIntoMetric(STabObj *pMetric, STabObj *pMeter) {

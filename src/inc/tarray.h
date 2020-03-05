@@ -68,7 +68,7 @@ void* taosArrayGet(SArray* pArray, size_t index);
  * @param pArray
  * @return
  */
-size_t taosArrayGetSize(SArray* pArray);
+size_t taosArrayGetSize(const SArray* pArray);
 
 /**
  *

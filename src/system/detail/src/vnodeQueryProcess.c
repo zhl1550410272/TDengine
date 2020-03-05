@@ -25,6 +25,7 @@
 #include "vnodeUtil.h"
 
 #include "vnodeQueryImpl.h"
+#include "vnodeQueryIO.h"
 
 #define ALL_CACHE_BLOCKS_CHECKED(q)                            \
   (((q)->slot == (q)->currentSlot && QUERY_IS_ASC_QUERY(q)) || \
@@ -993,7 +994,7 @@ static void vnodeSingleTableFixedOutputProcessor(SQInfo *pQInfo) {
   SQuery *          pQuery = &pQInfo->query;
   SQueryRuntimeEnv *pRuntimeEnv = &pQInfo->pTableQuerySupporter->runtimeEnv;
 
-  assert(pQuery->slot >= 0 && pQuery->pos >= 0);
+//  assert(pQuery->slot >= 0 && pQuery->pos >= 0);
 
   vnodeScanAllData(pRuntimeEnv);
   doFinalizeResult(pRuntimeEnv);
@@ -1004,8 +1005,8 @@ static void vnodeSingleTableFixedOutputProcessor(SQInfo *pQInfo) {
 
   // since the numOfOutputElems must be identical for all sql functions that are allowed to be executed simutanelously.
   pQuery->pointsRead = getNumOfResult(pRuntimeEnv);
-  assert(pQuery->pointsRead <= pQuery->pointsToRead &&
-         Q_STATUS_EQUAL(pQuery->over, QUERY_COMPLETED | QUERY_NO_DATA_TO_CHECK));
+//  assert(pQuery->pointsRead <= pQuery->pointsToRead &&
+//         Q_STATUS_EQUAL(pQuery->over, QUERY_COMPLETED | QUERY_NO_DATA_TO_CHECK));
 
   // must be top/bottom query if offset > 0
   if (pQuery->limit.offset > 0) {
@@ -1279,7 +1280,7 @@ void vnodeSingleTableQuery(SSchedMsg *pMsg) {
 
   /* number of points returned during this query  */
   pQuery->pointsRead = 0;
-  assert(pQuery->pos >= 0 && pQuery->slot >= 0);
+//  assert(pQuery->pos >= 0 && pQuery->slot >= 0);
 
   int64_t st = taosGetTimestampUs();
 

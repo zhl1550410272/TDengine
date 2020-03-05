@@ -213,13 +213,14 @@ static void mgmtRetrieveByMeterName(tQueryResultset* pRes, char* str, STabObj* p
   }
 }
 
-static bool mgmtTablenameFilterCallback(tSkipListNode* pNode, void* param) {
+static bool mgmtTablenameFilterCallback(SSkipListNode* pNode, void* param) {
   SMeterNameFilterSupporter* pSupporter = (SMeterNameFilterSupporter*)param;
 
   char name[TSDB_METER_ID_LEN] = {0};
 
   // pattern compare for meter name
-  STabObj* pMeterObj = (STabObj*)pNode->pData;
+//  STabObj* pMeterObj = (STabObj*)pNode->pData;
+  STabObj* pMeterObj = NULL;
   extractTableName(pMeterObj->meterId, name);
 
   return patternMatch(pSupporter->pattern, name, TSDB_METER_ID_LEN, &pSupporter->info) == TSDB_PATTERN_MATCH;
@@ -230,7 +231,7 @@ static void mgmtRetrieveFromLikeOptr(tQueryResultset* pRes, const char* str, STa
   SMeterNameFilterSupporter supporter = {info, (char*) str};
 
   pRes->num =
-      tSkipListIterateList(pMetric->pSkipList, (tSkipListNode***)&pRes->pRes, mgmtTablenameFilterCallback, &supporter);
+      tSkipListIterateList(pMetric->pSkipList, (SSkipListNode***)&pRes->pRes, mgmtTablenameFilterCallback, &supporter);
 }
 
 static void mgmtFilterByTableNameCond(tQueryResultset* pRes, char* condStr, int32_t len, STabObj* pMetric) {
@@ -254,11 +255,13 @@ static void mgmtFilterByTableNameCond(tQueryResultset* pRes, char* condStr, int3
   free(str);
 }
 
-UNUSED_FUNC static bool mgmtJoinFilterCallback(tSkipListNode* pNode, void* param) {
+UNUSED_FUNC static bool mgmtJoinFilterCallback(SSkipListNode* pNode, void* param) {
   SJoinSupporter* pSupporter = (SJoinSupporter*)param;
 
   SSchema s = {0};
-  char*   v = mgmtMeterGetTag((STabObj*)pNode->pData, pSupporter->colIndex, &s);
+  assert(0);
+  char* v = NULL;
+//  char*   v = mgmtMeterGetTag((STabObj*)pNode->pData, pSupporter->colIndex, &s);
 
   for (int32_t i = 0; i < pSupporter->size; ++i) {
     int32_t ret = doCompare(v, pSupporter->val[i], pSupporter->type, s.bytes);
@@ -416,7 +419,7 @@ int32_t mgmtDoJoin(SMetricMetaMsg* pMetricMetaMsg, tQueryResultset* pRes) {
 }
 
 /**
- * convert the result pointer to STabObj instead of tSkipListNode
+ * convert the result pointer to STabObj instead of SSkipListNode
  * @param pRes
  */
 static void tansformQueryResult(tQueryResultset* pRes) {
@@ -425,7 +428,8 @@ static void tansformQueryResult(tQueryResultset* pRes) {
   }
 
   for (int32_t i = 0; i < pRes->num; ++i) {
-    pRes->pRes[i] = ((tSkipListNode*)(pRes->pRes[i]))->pData;
+    assert(0);
+//    pRes->pRes[i] = ((SSkipListNode*)(pRes->pRes[i]))->pData;
   }
 }
 
@@ -736,7 +740,7 @@ int mgmtRetrieveMetersFromMetric(SMetricMetaMsg* pMsg, int32_t tableIndex, tQuer
   char*               tmpTableNameCond = NULL;
 
   // no table created in accordance with this metric.
-  if (pMetric->pSkipList == NULL || pMetric->pSkipList->nSize == 0) {
+  if (pMetric->pSkipList == NULL || pMetric->pSkipList->size == 0) {
     assert(pMetric->numOfMeters == 0);
     return TSDB_CODE_SUCCESS;
   }
@@ -796,7 +800,7 @@ int mgmtRetrieveMetersFromMetric(SMetricMetaMsg* pMsg, int32_t tableIndex, tQuer
     }
   } else {
     mTrace("metric:%s retrieve all meter, no query condition", pMetric->meterId);
-    pRes->num = tSkipListIterateList(pMetric->pSkipList, (tSkipListNode***)&pRes->pRes, NULL, NULL);
+    pRes->num = tSkipListIterateList(pMetric->pSkipList, (SSkipListNode***)&pRes->pRes, NULL, NULL);
     tansformQueryResult(pRes);
   }
 
@@ -822,8 +826,9 @@ static char* getTagValueFromMeter(STabObj* pMeter, int32_t offset, int32_t len, 
 bool tSkipListNodeFilterCallback(const void* pNode, void* param) {
   
   tQueryInfo* pInfo = (tQueryInfo*)param;
-  STabObj*    pMeter = (STabObj*)(((tSkipListNode*)pNode)->pData);
-
+  
+//  STabObj*    pMeter = (STabObj*)(((SSkipListNode*)pNode)->pData);
+  STabObj* pMeter = NULL;
   char   buf[TSDB_MAX_TAGS_LEN] = {0};
   
   char*  val = getTagValueFromMeter(pMeter, pInfo->offset, pInfo->sch.bytes, buf);

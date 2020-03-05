@@ -625,8 +625,8 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType) {
 //  return NULL;
 //}
 //
-// int32_t tSkipListIterateList(SSkipList *pSkipList, SSkipListNode ***pRes, bool (*fp)(SSkipListNode *, void *),
-//                             void *param) {
+ int32_t tSkipListIterateList(SSkipList *pSkipList, SSkipListNode ***pRes, bool (*fp)(SSkipListNode *, void *),
+                             void *param) {
 //  (*pRes) = (SSkipListNode **)calloc(1, POINTER_BYTES * pSkipList->nSize);
 //  if (NULL == *pRes) {
 //    pError("error skiplist %p, malloc failed", pSkipList);
@@ -666,12 +666,12 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType) {
 //  }
 //
 //  return num;
-//}
+}
 //
-// int32_t tSkipListIteratorReset(SSkipList *pSkipList, SSkipListIterator *iter) {
-//  if (pSkipList == NULL) {
-//    return -1;
-//  }
+ int32_t tSkipListIteratorReset(SSkipList *pSkipList, SSkipListIterator *iter) {
+  if (pSkipList == NULL) {
+    return -1;
+  }
 //
 //  iter->pSkipList = pSkipList;
 //  if (pSkipList->lock) {
@@ -684,14 +684,14 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType) {
 //    pthread_rwlock_unlock(&pSkipList->lock);
 //  }
 //
-//  return 0;
-//}
+  return 0;
+}
 //
-// bool tSkipListIteratorNext(SSkipListIterator *iter) {
-//  if (iter->num == 0 || iter->pSkipList == NULL) {
-//    return false;
-//  }
-//
+ bool tSkipListIteratorNext(SSkipListIterator *iter) {
+  if (iter->num == 0 || iter->pSkipList == NULL) {
+    return false;
+  }
+
 //  SSkipList *pSkipList = iter->pSkipList;
 //
 //  pthread_rwlock_rdlock(&pSkipList->lock);
@@ -703,10 +703,10 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType) {
 //
 //  pthread_rwlock_unlock(&pSkipList->lock);
 //
-//  return iter->cur != NULL;
-//}
-//
-// SSkipListNode *tSkipListIteratorGet(SSkipListIterator *iter) { return iter->cur; }
+  return iter->cur != NULL;
+}
+
+ SSkipListNode *tSkipListIteratorGet(SSkipListIterator *iter) { return iter->cur; }
 //
 // int32_t tSkipListRangeQuery(SSkipList *pSkipList, tSKipListQueryCond *pCond, SSkipListNode ***pRes) {
 //  pSkipList->state.queryCount++;
@@ -797,6 +797,5 @@ void tSkipListPrint(SSkipList *pSkipList, int16_t nlevel) {
     }
 
     p = SL_GET_FORWARD_POINTER(p, nlevel - 1);
-    //    p = p->pForward[nlevel - 1];
   }
 }

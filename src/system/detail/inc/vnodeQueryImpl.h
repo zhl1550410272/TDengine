@@ -24,6 +24,7 @@ extern "C" {
 
 #include "hash.h"
 #include "hashutil.h"
+#include "vnodeQueryIO.h"
 
 #define GET_QINFO_ADDR(x) ((char*)(x)-offsetof(SQInfo, query))
 #define Q_STATUS_EQUAL(p, s) (((p) & (s)) != 0)
@@ -85,12 +86,6 @@ typedef enum {
   QUERY_NO_DATA_TO_CHECK = 0x8u,
 } vnodeQueryStatus;
 
-typedef struct SPointInterpoSupporter {
-  int32_t numOfCols;
-  char**  pPrevPoint;
-  char**  pNextPoint;
-} SPointInterpoSupporter;
-
 typedef struct SBlockInfo {
   TSKEY   keyFirst;
   TSKEY   keyLast;
@@ -115,8 +110,6 @@ typedef enum {
 #define IS_SUPPLEMENT_SCAN(runtime) ((runtime)->scanFlag == SUPPLEMENTARY_SCAN)
 #define SET_SUPPLEMENT_SCAN_FLAG(runtime) ((runtime)->scanFlag = SUPPLEMENTARY_SCAN)
 #define SET_MASTER_SCAN_FLAG(runtime) ((runtime)->scanFlag = MASTER_SCAN)
-
-typedef int (*__block_search_fn_t)(char* data, int num, int64_t key, int order);
 
 static FORCE_INLINE SMeterObj* getMeterObj(void* hashHandle, int32_t sid) {
   return *(SMeterObj**)taosHashGet(hashHandle, (const char*)&sid, sizeof(sid));
@@ -143,7 +136,7 @@ void initCtxOutputBuf(SQueryRuntimeEnv* pRuntimeEnv);
 void resetCtxOutputBuf(SQueryRuntimeEnv* pRuntimeEnv);
 void forwardCtxOutputBuf(SQueryRuntimeEnv* pRuntimeEnv, int64_t output);
 
-bool needPrimaryTimestampCol(SQuery* pQuery, SBlockInfo* pBlockInfo);
+bool needPrimaryTimestampCol(SQuery *pQuery, SDataBlockInfo *pDataBlockInfo);
 void vnodeScanAllData(SQueryRuntimeEnv* pRuntimeEnv);
 
 int32_t vnodeQueryResultInterpolate(SQInfo* pQInfo, tFilePage** pDst, tFilePage** pDataSrc, int32_t numOfRows,
@@ -163,7 +156,6 @@ void pointInterpSupporterInit(SQuery* pQuery, SPointInterpoSupporter* pInterpoSu
 void pointInterpSupporterDestroy(SPointInterpoSupporter* pPointInterpSupport);
 void pointInterpSupporterSetData(SQInfo* pQInfo, SPointInterpoSupporter* pPointInterpSupport);
 
-int64_t loadRequiredBlockIntoMem(SQueryRuntimeEnv* pRuntimeEnv, SPositionInfo* position);
 void    disableFunctForSuppleScan(STableQuerySupportObj* pSupporter, int32_t order);
 void    enableFunctForMasterScan(SQueryRuntimeEnv* pRuntimeEnv, int32_t order);
 
@@ -265,11 +257,10 @@ void setMeterDataInfo(SMeterDataInfo* pMeterDataInfo, SMeterObj* pMeterObj, int3
 
 void vnodeSetTagValueInParam(tSidSet* pSidSet, SQueryRuntimeEnv* pRuntimeEnv, SMeterSidExtInfo* pMeterInfo);
 
-void vnodeCheckIfDataExists(SQueryRuntimeEnv* pRuntimeEnv, SMeterObj* pMeterObj, bool* dataInDisk, bool* dataInCache);
-
 void displayInterResult(SData** pdata, SQuery* pQuery, int32_t numOfRows);
 
 void vnodePrintQueryStatistics(STableQuerySupportObj* pSupporter);
+char *getPosInResultPage(SQueryRuntimeEnv *pRuntimeEnv, int32_t columnIndex, SWindowResult *pResult);
 
 void clearTimeWindowResBuf(SQueryRuntimeEnv* pRuntimeEnv, SWindowResult* pOneOutputRes);
 void copyTimeWindowResBuf(SQueryRuntimeEnv* pRuntimeEnv, SWindowResult* dst, const SWindowResult* src);
@@ -285,6 +276,11 @@ void    clearClosedTimeWindow(SQueryRuntimeEnv* pRuntimeEnv);
 int32_t numOfClosedTimeWindow(SWindowResInfo* pWindowResInfo);
 void    closeTimeWindow(SWindowResInfo* pWindowResInfo, int32_t slot);
 void    closeAllTimeWindow(SWindowResInfo* pWindowResInfo);
+SWindowResult *getWindowResult(SWindowResInfo *pWindowResInfo, int32_t slot);
+int32_t curTimeWindow(SWindowResInfo *pWindowResInfo);
+bool isWindowResClosed(SWindowResInfo *pWindowResInfo, int32_t slot);
+
+void createQueryResultInfo(SQuery *pQuery, SWindowResult *pResultRow, bool isSTableQuery, SPosInfo *posInfo);
 
 #ifdef __cplusplus
 }

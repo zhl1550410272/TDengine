@@ -1,10 +1,10 @@
-//#include "tskiplistQuery.h"
-//
-///*
-// * query processor based on query condition
-// */
-//int32_t tSkipListQuery(SSkipList *pSkipList, tSKipListQueryCond *pQueryCond, tSkipListNode ***pResult) {
-//  // query condition check
+#include "tskiplistQuery.h"
+
+/*
+ * query processor based on query condition
+ */
+int32_t tSkipListQuery(SSkipList *pSkipList, tSKipListQueryCond *pQueryCond, SSkipListNode ***pResult) {
+//   query condition check
 //  int32_t       rel = 0;
 //  __compar_fn_t comparFn = getKeyComparator(pQueryCond->lowerBnd.nType);
 //
@@ -31,8 +31,8 @@
 //    /* range query, query operation code check */
 //    return tSkipListRangeQuery(pSkipList, pQueryCond, pResult);
 //  }
-//}
-//
+}
+
 //typedef struct MultipleQueryResult {
 //  int32_t         len;
 //  tSkipListNode **pData;
@@ -102,8 +102,8 @@
 //  return j;
 //}
 //
-//int32_t tSkipListPointQuery(SSkipList *pSkipList, SSkipListKey *pKey, int32_t numOfKey, tSkipListPointQueryType type,
-//                            tSkipListNode ***pRes) {
+int32_t tSkipListPointQuery(SSkipList *pSkipList, SSkipListKey *pKey, int32_t numOfKey, tSkipListPointQueryType type,
+                            SSkipListNode ***pRes) {
 //  if (numOfKey == 0 || pKey == NULL || pSkipList == NULL || pSkipList->nSize == 0 ||
 //      (type != INCLUDE_POINT_QUERY && type != EXCLUDE_POINT_QUERY)) {
 //    (*pRes) = NULL;
@@ -142,5 +142,5 @@
 //    }
 //    return retLen;
 //  }
-//}
-//
+}
+

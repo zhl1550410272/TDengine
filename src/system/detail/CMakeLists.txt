@@ -13,6 +13,7 @@ IF ((TD_LINUX_64) OR (TD_LINUX_32 AND TD_ARM))
   AUX_SOURCE_DIRECTORY(./src SRC)
   LIST(REMOVE_ITEM SRC ./src/vnodeFileUtil.c)
   LIST(REMOVE_ITEM SRC ./src/taosGrant.c)
+  LIST(REMOVE_ITEM SRC ./src/vnodeQueryImpl.c)
 
   ADD_EXECUTABLE(taosd ${SRC})
 

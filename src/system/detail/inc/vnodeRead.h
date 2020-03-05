@@ -25,6 +25,7 @@ extern "C" {
 
 #include "tinterpolation.h"
 #include "vnodeTagMgmt.h"
+#include "tarray.h"
 
 /*
  * use to keep the first point position, consisting of position in blk and block
@@ -36,13 +37,13 @@ typedef struct {
   int32_t fileId;
 } SPositionInfo;
 
-typedef struct SLoadDataBlockInfo {
+typedef struct SDataBlockLoadInfo {
   int32_t fileListIndex; /* index of this file in files list of this vnode */
   int32_t fileId;
   int32_t slotIdx;
   int32_t sid;
   bool    tsLoaded;      // if timestamp column of current block is loaded or not
-} SLoadDataBlockInfo;
+} SDataBlockLoadInfo;
 
 typedef struct SLoadCompBlockInfo {
   int32_t sid; /* meter sid */
@@ -128,6 +129,22 @@ typedef struct SQueryFilesInfo {
   char dbFilePathPrefix[PATH_MAX];
 } SQueryFilesInfo;
 
+typedef struct SQueryFilesInfo_rv {
+  SArray* pFileInfo;
+  int32_t          current;     // the memory mapped header file, NOTE: only one header file can be mmap.
+  int32_t          vnodeId;
+  
+  int32_t          headerFd;         // header file fd
+  int64_t          headerFileSize;
+  int32_t          dataFd;
+  int32_t          lastFd;
+  
+  char headerFilePath[PATH_MAX];  // current opened header file name
+  char dataFilePath[PATH_MAX];    // current opened data file name
+  char lastFilePath[PATH_MAX];    // current opened last file path
+  char dbFilePathPrefix[PATH_MAX];
+} SQueryFilesInfo_rv;
+
 typedef struct SWindowResInfo {
   SWindowResult*      pResult;    // reference to SQuerySupporter->pResult
   void*               hashList;   // hash list for quick access
@@ -155,8 +172,8 @@ typedef struct SQueryRuntimeEnv {
   SQuery*             pQuery;
   SMeterObj*          pMeterObj;
   SQLFunctionCtx*     pCtx;
-  SLoadDataBlockInfo  loadBlockInfo;         /* record current block load information */
-  SLoadCompBlockInfo  loadCompBlockInfo; /* record current compblock information in SQuery */
+  SDataBlockLoadInfo  dataBlockLoadInfo;         /* record current block load information */
+  SLoadCompBlockInfo  compBlockLoadInfo; /* record current compblock information in SQuery */
   SQueryFilesInfo     vnodeFileInfo;
   int16_t             numOfRowsPerPage;
   int16_t             offset[TSDB_MAX_COLUMNS];
@@ -179,6 +196,8 @@ typedef struct SQueryRuntimeEnv {
    * So we keep a copy of the support structure as well as the cache block data itself.
    */
   SCacheBlock         cacheBlock;
+  
+  void* pQueryHandle;
 } SQueryRuntimeEnv;
 
 /* intermediate pos during multimeter query involves interval */
