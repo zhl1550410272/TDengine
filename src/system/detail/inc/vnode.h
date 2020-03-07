@@ -211,6 +211,11 @@ typedef struct SColumnInfoEx {
   int16_t req[2];
 } SColumnInfoEx;
 
+typedef struct SColumnInfoEx_ {
+  SColumnInfo info;
+  SData* pData;    // the corresponding block data in memory
+} SColumnInfoEx_;
+
 struct SColumnFilterElem;
 
 typedef bool (*__filter_func_t)(struct SColumnFilterElem *pFilter, char *val1, char *val2);

@@ -45,6 +45,14 @@ typedef struct SDataBlockLoadInfo {
   bool    tsLoaded;      // if timestamp column of current block is loaded or not
 } SDataBlockLoadInfo;
 
+typedef struct SDataBlockLoadInfo_ {
+  int32_t fileListIndex;
+  int32_t fileId;
+  int32_t slotIdx;
+  int32_t sid;
+  SArray* pLoadedCols;
+} SDataBlockLoadInfo_;
+
 typedef struct SLoadCompBlockInfo {
   int32_t sid; /* meter sid */
   int32_t fileId;

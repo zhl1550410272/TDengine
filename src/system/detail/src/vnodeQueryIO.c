@@ -36,7 +36,7 @@
 #include "vnodeQueryImpl.h"
 #include "vnodeStatus.h"
 
-#define PRIMARY_TSCOL_REQUIRED(c) (((SColumnInfoEx*)taosArrayGet(c, 0))->data.colId == PRIMARYKEY_TIMESTAMP_COL_INDEX)
+#define PRIMARY_TSCOL_REQUIRED(c) (((SColumnInfoEx *)taosArrayGet(c, 0))->data.colId == PRIMARYKEY_TIMESTAMP_COL_INDEX)
 #define QUERY_IS_ASC_QUERY_RV(o) (o == TSQL_SO_ASC)
 #define QH_GET_NUM_OF_COLS(handle) (taosArrayGetSize((handle)->pColumns))
 
@@ -172,7 +172,7 @@ static bool checkIsHeaderFileEmpty_(SQueryFilesInfo_rv *pVnodeFilesInfo) {
   if (stat(pVnodeFilesInfo->headerFilePath, &fstat) < 0) {
     return true;
   }
-  
+
   pVnodeFilesInfo->headerFileSize = fstat.st_size;
   return isHeaderFileEmpty(pVnodeFilesInfo->vnodeId, pVnodeFilesInfo->headerFileSize);
 }
@@ -218,13 +218,15 @@ static int32_t binarySearchInCacheBlk_(SCacheInfo *pCacheInfo, int32_t order, TS
 
 static SCompBlock *getDiskDataBlock_(STsdbQueryHandle *pQueryHandle, int32_t slot);
 
-static int32_t loadDataBlockIntoMem_(STsdbQueryHandle *pQueryHandle, SCompBlock *pBlock, SField **pField, int32_t fileIdx,
-                                     bool loadPrimaryCol, bool loadSField);
+static int32_t loadDataBlockIntoMem_(STsdbQueryHandle *pQueryHandle, SCompBlock *pBlock, SField **pField,
+                                     int32_t fileIdx, SArray *pColIdList);
 
 static int32_t getNextDataFileCompInfo_(STsdbQueryHandle *pQueryHandle, SQueryHandlePos *pCur,
                                         SQueryFilesInfo_rv *pVnodeFilesInfo, int32_t step);
 
 static TSKEY getFirstDataBlockInCache_(STsdbQueryHandle *pQueryHandle);
+
+static SArray *getDefaultLoadColumns(STsdbQueryHandle *pQueryHandle, bool loadTS);
 
 /**
  * save triple tuple of (fileId, slot, pos) to SPositionInfo
@@ -345,7 +347,8 @@ static TSKEY getFirstDataBlockInCache(SQueryRuntimeEnv *pRuntimeEnv) {
   return nextTimestamp;
 }
 
-int64_t getQueryStartPositionInCache_rv(STsdbQueryHandle *pQueryHandle, int32_t *slot, int32_t *pos, bool ignoreQueryRange);
+int64_t getQueryStartPositionInCache_rv(STsdbQueryHandle *pQueryHandle, int32_t *slot, int32_t *pos,
+                                        bool ignoreQueryRange);
 
 static TSKEY getFirstDataBlockInCache_(STsdbQueryHandle *pQueryHandle) {
   //  assert(pQuery->fileId == -1 && QUERY_IS_ASC_QUERY(pQuery));
@@ -359,7 +362,8 @@ static TSKEY getFirstDataBlockInCache_(STsdbQueryHandle *pQueryHandle) {
    * If cache data and disk-based data are not completely overlapped, cacheBoundaryCheck function will set the
    * correct status flag.
    */
-  TSKEY nextTimestamp = getQueryStartPositionInCache_rv(pQueryHandle, &pQueryHandle->cur.slot, &pQueryHandle->cur.pos, true);
+  TSKEY nextTimestamp =
+      getQueryStartPositionInCache_rv(pQueryHandle, &pQueryHandle->cur.slot, &pQueryHandle->cur.pos, true);
   //  if (nextTimestamp < 0) {
   //    setQueryStatus(pQuery, QUERY_NO_DATA_TO_CHECK);
   //  } else if (nextTimestamp > pQuery->ekey) {
@@ -401,19 +405,19 @@ int32_t vnodeIsDatablockLoaded(SQueryRuntimeEnv *pRuntimeEnv, SMeterObj *pMeterO
   return DISK_BLOCK_LOAD_BLOCK;
 }
 
-int32_t vnodeIsDatablockLoaded_(SQueryHandlePos *cur, SDataBlockLoadInfo *pLoadInfo, SMeterObj *pMeterObj,
-                                int32_t fileIndex, bool loadTS) {
+int32_t vnodeIsDatablockLoaded_(SQueryHandlePos *cur, SDataBlockLoadInfo_ *pLoadInfo, SMeterObj *pMeterObj,
+                                int32_t fileIndex) {
   //  SDataBlockLoadInfo *pLoadInfo = &pRuntimeEnv->dataBlockLoadInfo;
 
   /* this block has been loaded into memory, return directly */
   if (pLoadInfo->fileId == cur->fileId && pLoadInfo->slotIdx == cur->slot && cur->slot != -1 &&
       pLoadInfo->sid == pMeterObj->sid && pLoadInfo->fileListIndex == fileIndex) {
     // previous load operation does not load the primary timestamp column, we only need to load the timestamp column
-    if (pLoadInfo->tsLoaded == false && pLoadInfo->tsLoaded != loadTS) {
-      return DISK_BLOCK_LOAD_TS;
-    } else {
-      return DISK_BLOCK_NO_NEED_TO_LOAD;
-    }
+    //    if (pLoadInfo->tsLoaded == false && pLoadInfo->tsLoaded != loadTS) {
+    //      return DISK_BLOCK_LOAD_TS;
+    //    } else {
+    return DISK_BLOCK_NO_NEED_TO_LOAD;
+    //    }
   }
 
   return DISK_BLOCK_LOAD_BLOCK;
@@ -486,19 +490,17 @@ TSKEY getTimestampInDiskBlock_(STsdbQueryHandle *pQueryHandle, int32_t index) {
   SDataBlockLoadInfo *pLoadInfo = &pQueryHandle->dataBlockLoadInfo;
   //  assert(pQuery->pos >= 0 && pQuery->pos < pBlock->numOfPoints);
 
-  SMeterObj *pMeterObj = *(SMeterObj**) taosArrayGet(pQueryHandle->pMeterObjList, 0);
+  SMeterObj *pMeterObj = *(SMeterObj **)taosArrayGet(pQueryHandle->pTableList, 0);
 
-  int32_t fileIndex = vnodeGetVnodeHeaderFileIndex_(&pQueryHandle->cur.fileId, pQueryHandle->order, &pQueryHandle->vnodeFileInfo);
+  int32_t fileIndex =
+      vnodeGetVnodeHeaderFileIndex_(&pQueryHandle->cur.fileId, pQueryHandle->order, &pQueryHandle->vnodeFileInfo);
 
   //  dTrace("QInfo:%p vid:%d sid:%d id:%s, fileId:%d, slot:%d load data block due to primary key required",
   //         GET_QINFO_ADDR(pQuery), pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->fileId,
   //         pQuery->slot);
 
-  bool loadTS = true;
-  bool loadFields = true;
-
-  int32_t ret = loadDataBlockIntoMem_(pQueryHandle, pQueryHandle->pBlock, &pQueryHandle->pFields[pQueryHandle->cur.slot], fileIndex, loadTS,
-                                      loadFields);
+  int32_t ret = loadDataBlockIntoMem_(pQueryHandle, pQueryHandle->pBlock,
+                                      &pQueryHandle->pFields[pQueryHandle->cur.slot], fileIndex, NULL);
   if (ret != TSDB_CODE_SUCCESS) {
     return -1;
   }
@@ -542,14 +544,14 @@ static void vnodeSetDataBlockInfoLoaded(SQueryRuntimeEnv *pRuntimeEnv, SMeterObj
 }
 
 static void vnodeSetDataBlockInfoLoaded_(STsdbQueryHandle *pQueryHandle, SMeterObj *pMeterObj, int32_t fileIndex,
-                                         bool tsLoaded, SQueryHandlePos *cur) {
-  SDataBlockLoadInfo *pLoadInfo = &pQueryHandle->dataBlockLoadInfo;
+                                         SArray *pLoadedCols, SQueryHandlePos *cur) {
+  SDataBlockLoadInfo_ *pLoadInfo = &pQueryHandle->dataBlockLoadInfo;
 
   pLoadInfo->fileId = cur->fileId;
   pLoadInfo->slotIdx = cur->slot;
   pLoadInfo->fileListIndex = fileIndex;
   pLoadInfo->sid = pMeterObj->sid;
-  pLoadInfo->tsLoaded = tsLoaded;
+  pLoadInfo->pLoadedCols = pLoadedCols;
 }
 
 void vnodeInitDataBlockLoadInfo(SDataBlockLoadInfo *pBlockLoadInfo) {
@@ -827,7 +829,7 @@ static int vnodeGetCompBlockInfo_(STsdbQueryHandle *pQueryHandle, SMeterObj *pMe
   }
 
   pQueryHandle->numOfBlocks = compInfo.numOfBlocks;
-  
+
   // free allocated SField data
   //  vnodeFreeFieldsEx(pRuntimeEnv);
   //  pQuery->numOfBlocks = (int32_t)compInfo.numOfBlocks;
@@ -853,8 +855,8 @@ static int vnodeGetCompBlockInfo_(STsdbQueryHandle *pQueryHandle, SMeterObj *pMe
   TSCKSUM checksum = *(TSCKSUM *)((char *)pQueryHandle->pBlock + compBlockSize);
 
   // check comp block integrity
-  if (validateCompBlockSegment_(pVnodeFileInfo->headerFilePath, &compInfo, (char *)pQueryHandle->pBlock, pMeterObj->vnode,
-                                checksum) < 0) {
+  if (validateCompBlockSegment_(pVnodeFileInfo->headerFilePath, &compInfo, (char *)pQueryHandle->pBlock,
+                                pMeterObj->vnode, checksum) < 0) {
     free(buf);
     return -1;
   }
@@ -938,7 +940,7 @@ int32_t moveToNextBlock(SQueryRuntimeEnv *pRuntimeEnv, int32_t step, __block_sea
   return DISK_DATA_LOADED;
 }
 
-int32_t moveToNextBlock_(STsdbQueryHandle *pQueryHandle, int32_t step, __block_search_fn_t searchFn, bool loadData) {
+int32_t moveToNextBlock_(STsdbQueryHandle *pQueryHandle, int32_t step, bool loadData) {
   SQueryHandlePos *cur = &pQueryHandle->cur;
 
   if (pQueryHandle->cur.fileId >= 0) {
@@ -960,12 +962,12 @@ int32_t moveToNextBlock_(STsdbQueryHandle *pQueryHandle, int32_t step, __block_s
         assert(cur->fileId == -1);
 
         if (step == QUERY_ASC_FORWARD_STEP) {
-          getFirstDataBlockInCache_(pQueryHandle);
+          return getFirstDataBlockInCache_(pQueryHandle);
         } else {  // no data to check for desc order query
                   //          setQueryStatus(pQuery, QUERY_NO_DATA_TO_CHECK);
         }
 
-        return DISK_DATA_LOADED;
+        return 0;
       }
     } else {  // next block in the same file
       int32_t fid = cur->fileId;
@@ -975,27 +977,18 @@ int32_t moveToNextBlock_(STsdbQueryHandle *pQueryHandle, int32_t step, __block_s
       pQueryHandle->cur.pos = (step == QUERY_ASC_FORWARD_STEP) ? 0 : pQueryHandle->pBlock[cur->slot].numOfPoints - 1;
     }
 
-    //    assert(pQuery->pBlock != NULL);
-
     /* no need to load data, return directly */
     if (!loadData) {
-      return DISK_DATA_LOADED;
+      return 0;
     }
 
     // load data block function will change the value of pQuery->pos
-    //    int32_t ret =
-    //        LoadDatablockOnDemand_(&pQuery->pBlock[pQuery->slot], &pQuery->pFields[pQuery->slot],
-    //        &pRuntimeEnv->blockStatus,
-    //                              pRuntimeEnv, fileIndex, pQuery->slot, searchFn, true);
-    //    if (ret != DISK_DATA_LOADED) {
-    //      return ret;
-    //    }
-    return DISK_DATA_LOADED;
+    return 0;
   } else {  // data in cache
             //    return moveToNextBlockInCache_(pRuntimeEnv, step, searchFn);
   }
 
-  return DISK_DATA_LOADED;
+  return 0;
 }
 
 static int32_t readDataFromDiskFile(int fd, SQInfo *pQInfo, SQueryFilesInfo *pQueryFile, char *buf, uint64_t offset,
@@ -1138,9 +1131,6 @@ static int32_t loadDataBlockFieldsInfo(SQueryRuntimeEnv *pRuntimeEnv, SCompBlock
 }
 
 static int32_t loadDataBlockFieldsInfo_(STsdbQueryHandle *pQueryHandle, SCompBlock *pBlock, SField **pField) {
-  //  SQuery *         pQuery = pRuntimeEnv->pQuery;
-  //  SQInfo *         pQInfo = (SQInfo *)GET_QINFO_ADDR(pQuery);
-  SMeterObj *         pMeterObj = taosArrayGet(pQueryHandle->pMeterObjList, 0);
   SQueryFilesInfo_rv *pVnodeFilesInfo = &pQueryHandle->vnodeFileInfo;
 
   size_t size = sizeof(SField) * (pBlock->numOfCols) + sizeof(TSCKSUM);
@@ -1187,7 +1177,7 @@ static void fillWithNull(SQuery *pQuery, char *dst, int32_t col, int32_t numOfPo
   setNullN(dst, type, bytes, numOfPoints);
 }
 
-static void fillWithNull_(SColumnInfo *pColumnInfo, char *dst, int32_t col, int32_t numOfPoints) {
+static void fillWithNull_(SColumnInfo *pColumnInfo, char *dst, int32_t numOfPoints) {
   setNullN(dst, pColumnInfo->type, pColumnInfo->bytes, numOfPoints);
 }
 
@@ -1208,16 +1198,15 @@ static int32_t loadPrimaryTSColumn(SQueryRuntimeEnv *pRuntimeEnv, SCompBlock *pB
 
 static int32_t loadPrimaryTSColumn_(STsdbQueryHandle *pQueryHandle, SCompBlock *pBlock, SField **pField,
                                     int32_t *columnBytes) {
-  //  SQuery *pQuery = pRuntimeEnv->pQuery;
   //  assert(PRIMARY_TSCOL_LOADED(pQuery) == false);
 
   if (columnBytes != NULL) {
     (*columnBytes) += (*pField)[PRIMARYKEY_TIMESTAMP_COL_INDEX].len + sizeof(TSCKSUM);
   }
 
-  int32_t ret =
-      loadColumnIntoMem_(&pQueryHandle->vnodeFileInfo, pBlock, *pField, PRIMARYKEY_TIMESTAMP_COL_INDEX, pQueryHandle->tsBuf,
-                         pQueryHandle->unzipBuffer, pQueryHandle->secondaryUnzipBuffer, pQueryHandle->unzipBufSize);
+  int32_t ret = loadColumnIntoMem_(&pQueryHandle->vnodeFileInfo, pBlock, *pField, PRIMARYKEY_TIMESTAMP_COL_INDEX,
+                                   pQueryHandle->tsBuf, pQueryHandle->unzipBuffer, pQueryHandle->secondaryUnzipBuffer,
+                                   pQueryHandle->unzipBufSize);
   return ret;
 }
 
@@ -1357,143 +1346,131 @@ static int32_t loadDataBlockIntoMem(SCompBlock *pBlock, SField **pField, SQueryR
   return ret;
 }
 
-static int32_t loadDataBlockIntoMem_(STsdbQueryHandle *pQueryHandle, SCompBlock *pBlock, SField **pField, int32_t fileIdx,
-                                     bool loadPrimaryCol, bool loadSField) {
+static int32_t loadDataBlockIntoMem_(STsdbQueryHandle *pQueryHandle, SCompBlock *pBlock, SField **pField,
+                                     int32_t fileIdx, SArray *pColIdList) {
   int32_t i = 0, j = 0;
 
-  SMeterObj *pMeterObj = *(SMeterObj**)taosArrayGet(pQueryHandle->pMeterObjList, 0);
-  SData **   sdata = pQueryHandle->colDataBuffer;
-
-  //  assert(fileIdx == pRuntimeEnv->vnodeFileInfo.current);
+  // todo compared with the loaded columns, and only thoes not loaded column only.
+  SMeterObj *pMeterObj = taosArrayGetP(pQueryHandle->pTableList, 0);
 
   SData **primaryTSBuf = &pQueryHandle->tsBuf;
   void *  tmpBuf = pQueryHandle->unzipBuffer;
   int32_t columnBytes = 0;
 
-  //  SQueryCostSummary *pSummary = &pRuntimeEnv->summary;
-  SQueryHandlePos *cur = &pQueryHandle->cur;
-
-  int32_t status =
-      vnodeIsDatablockLoaded_(&pQueryHandle->cur, &pQueryHandle->dataBlockLoadInfo, pMeterObj, fileIdx, loadPrimaryCol);
+  // record the loaded columns and compare with prev
+  int32_t status = vnodeIsDatablockLoaded_(&pQueryHandle->cur, &pQueryHandle->dataBlockLoadInfo, pMeterObj, fileIdx);
   if (status == DISK_BLOCK_NO_NEED_TO_LOAD) {
     //    dTrace(
     //        "QInfo:%p vid:%d sid:%d id:%s, fileId:%d, data block has been loaded, no need to load again, ts:%d,
     //        slot:%d," " brange:%lld-%lld, rows:%d", GET_QINFO_ADDR(pQuery), pMeterObj->vnode, pMeterObj->sid,
     //        pMeterObj->meterId, pQuery->fileId, loadPrimaryCol, pQuery->slot, pBlock->keyFirst, pBlock->keyLast,
     //        pBlock->numOfPoints);
-
-    if (loadSField && (pQueryHandle->pFields == NULL || pQueryHandle->pFields[cur->slot] == NULL)) {
-      loadDataBlockFieldsInfo_(pQueryHandle, pBlock, &pQueryHandle->pFields[cur->slot]);
-    }
-
     return TSDB_CODE_SUCCESS;
-  } else if (status == DISK_BLOCK_LOAD_TS) {
-    //    dTrace("QInfo:%p vid:%d sid:%d id:%s, fileId:%d, data block has been loaded, incrementally load ts",
-    //           GET_QINFO_ADDR(pQuery), pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->fileId);
-
-    //    assert(PRIMARY_TSCOL_LOADED(pQuery) == false && loadSField == true);
-    if (pQueryHandle->pFields == NULL || pQueryHandle->pFields[cur->slot] == NULL) {
-      loadDataBlockFieldsInfo_(pQueryHandle, pBlock, &pQueryHandle->pFields[cur->slot]);
-    }
-
-    // load primary timestamp
-    int32_t ret = loadPrimaryTSColumn_(pQueryHandle, pBlock, pField, &columnBytes);
-
-    vnodeSetDataBlockInfoLoaded_(pQueryHandle, pMeterObj, fileIdx, loadPrimaryCol, cur);
-    return ret;
   }
 
-  /* failed to load fields info, return with error info */
-  if (loadSField && (loadDataBlockFieldsInfo_(pQueryHandle, pBlock, pField) != 0)) {
+  // failed to load fields info, return with error info
+  if (loadDataBlockFieldsInfo_(pQueryHandle, pBlock, pField) != 0) {
     return -1;
   }
 
-  int64_t st = taosGetTimestampUs();
-
-  if (loadPrimaryCol) {
+  int16_t colId = *(int16_t *)taosArrayGet(pColIdList, 0);
+  if (colId == 0) {
     if (PRIMARY_TSCOL_REQUIRED(pQueryHandle->pColumns)) {
-      *primaryTSBuf = sdata[0];
+      SColumnInfoEx_ *pColInfo = taosArrayGet(pQueryHandle->pColumns, 0);
+      *primaryTSBuf = pColInfo->pData;
     } else {
       int32_t ret = loadPrimaryTSColumn_(pQueryHandle, pBlock, pField, &columnBytes);
       if (ret != TSDB_CODE_SUCCESS) {
         return ret;
       }
 
-      //      pSummary->numOfSeek++;
       j += 1;  // first column of timestamp is not needed to be read again
+      i += 1;
     }
   }
 
   int32_t ret = 0;
 
   /* the first round always be 1, the secondary round is determined by queried function */
-  int32_t round = 0;  //(IS_MASTER_SCAN(pRuntimeEnv)) ? 0 : 1;
-
-  while (j < pBlock->numOfCols && i < QH_GET_NUM_OF_COLS(pQueryHandle)) {
-    SColumnInfoEx* pColumn = taosArrayGet(pQueryHandle->pColumns, i);
-    if ((*pField)[j].colId < pColumn->data.colId) {
+  while (j < pBlock->numOfCols && i < taosArrayGetSize(pColIdList)) {
+    colId = *(int16_t *)taosArrayGet(pColIdList, i);
+    if ((*pField)[j].colId < colId) {
       ++j;
-    } else if ((*pField)[j].colId == pColumn->data.colId) {
+    } else if ((*pField)[j].colId == colId) {
       // add additional check for data type
-      if ((*pField)[j].type != pColumn->data.type) {
-        ret = TSDB_CODE_INVALID_QUERY_MSG;
-        break;
-      }
+      //      if ((*pField)[j].type != pColumn->data.type) {
+      //        ret = TSDB_CODE_INVALID_QUERY_MSG;
+      //        break;
+      //      }
 
       /*
-       * during supplementary scan:
+       * during reversed scan:
        * 1. primary ts column (always loaded)
        * 2. query specified columns
        * 3. in case of filter column required, filter columns must be loaded.
        */
-      SColumnInfoEx* pColumn = taosArrayGet(pQueryHandle->pColumns, i);
-  
-      if (pColumn->req[round] == 1 || pColumn->data.colId == PRIMARYKEY_TIMESTAMP_COL_INDEX) {
-        // if data of this column in current block are all null, do NOT read it from disk
-        if ((*pField)[j].numOfNullPoints == pBlock->numOfPoints) {
-          fillWithNull_(pQueryHandle->pColumns, sdata[i]->data, i, pBlock->numOfPoints);
-        } else {
-          columnBytes += (*pField)[j].len + sizeof(TSCKSUM);
-          ret = loadColumnIntoMem_(&pQueryHandle->vnodeFileInfo, pBlock, *pField, j, sdata[i], tmpBuf,
-                                   pQueryHandle->secondaryUnzipBuffer, pQueryHandle->unzipBufSize);
-
-          //          pSummary->numOfSeek++;
+      SData *         sdata = NULL;
+      SColumnInfoEx_ *pColumn = NULL;
+      for (int32_t k = 0; k < QH_GET_NUM_OF_COLS(pQueryHandle); ++k) {
+        pColumn = taosArrayGet(pQueryHandle->pColumns, k);
+        if (pColumn->info.colId == colId) {
+          sdata = pColumn->pData;
+          break;
         }
+      }
+
+      assert(sdata != NULL && pColumn != NULL);
+
+      // if data of this column in current block are all null, do NOT read it from disk
+      if ((*pField)[j].numOfNullPoints == pBlock->numOfPoints) {
+        fillWithNull_(&pColumn->info, sdata->data, pBlock->numOfPoints);
+      } else {
+        columnBytes += (*pField)[j].len + sizeof(TSCKSUM);
+        ret = loadColumnIntoMem_(&pQueryHandle->vnodeFileInfo, pBlock, *pField, j, sdata, tmpBuf,
+                                 pQueryHandle->secondaryUnzipBuffer, pQueryHandle->unzipBufSize);
       }
       ++i;
       ++j;
     } else {
-      /*
-       * pQuery->colList[i].colIdx < (*pFields)[j].colId this column is not existed in current block,
-       * fill with NULL value
-       */
-      fillWithNull_(pQueryHandle->pColumns, sdata[i]->data, i, pBlock->numOfPoints);
+      SData *         sdata = NULL;
+      SColumnInfoEx_ *pColumn = NULL;
+      for (int32_t k = 0; k < QH_GET_NUM_OF_COLS(pQueryHandle); ++k) {
+        pColumn = taosArrayGet(pQueryHandle->pColumns, i);
+        if (pColumn->info.colId == colId) {
+          sdata = pColumn->pData;
+          break;
+        }
+      }
 
-      //      pSummary->totalGenData += (pBlock->numOfPoints * pQuery->colList[i].data.bytes);
+      // this column is not existed in current block, fill with NULL value
+      fillWithNull_(&pColumn->info, sdata->data, pBlock->numOfPoints);
       ++i;
     }
   }
 
-  if (j >= pBlock->numOfCols && i < QH_GET_NUM_OF_COLS(pQueryHandle)) {
-    // remain columns need to set null value
-    while (i < QH_GET_NUM_OF_COLS(pQueryHandle)) {
-      fillWithNull_(pQueryHandle->pColumns, sdata[i]->data, i, pBlock->numOfPoints);
+  // remain columns need to set null value
+  if (j >= pBlock->numOfCols && i < taosArrayGetSize(pColIdList)) {
+    while (i < taosArrayGetSize(pColIdList)) {
+      SData *         sdata = NULL;
+      SColumnInfoEx_ *pColumn = NULL;
+      for (int32_t k = 0; k < QH_GET_NUM_OF_COLS(pQueryHandle); ++k) {
+        pColumn = taosArrayGet(pQueryHandle->pColumns, k);
+        if (pColumn->info.colId == colId) {
+          sdata = pColumn->pData;
+          break;
+        }
+      }
 
-      //      pSummary->totalGenData += (pBlock->numOfPoints * pQuery->colList[i].data.bytes);
+      fillWithNull_(&pColumn->info, sdata->data, pBlock->numOfPoints);
       ++i;
     }
   }
 
-  int64_t et = taosGetTimestampUs();
   //  qTrace("QInfo:%p vid:%d sid:%d id:%s, slot:%d, load block completed, ts loaded:%d, rec:%d, elapsed:%f ms",
   //         GET_QINFO_ADDR(pQuery), pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->slot, loadPrimaryCol,
   //         pBlock->numOfPoints, (et - st) / 1000.0);
 
-  //  pSummary->totalBlockSize += columnBytes;
-  //  pSummary->loadBlocksUs += (et - st);
-  //  pSummary->readDiskBlocks++;
-
-  vnodeSetDataBlockInfoLoaded_(pQueryHandle, pMeterObj, fileIdx, loadPrimaryCol, &pQueryHandle->cur);
+  vnodeSetDataBlockInfoLoaded_(pQueryHandle, pMeterObj, fileIdx, pColIdList, &pQueryHandle->cur);
   return ret;
 }
 
@@ -1728,7 +1705,6 @@ void vnodeRecordAllFiles_rv(int32_t vnodeId, SQueryFilesInfo_rv *pVnodeFilesInfo
     return;
   }
 
-  //  pVnodeFilesInfo->pFileInfo = calloc(1, sizeof(SHeaderFileInfo) * alloc);
   SVnodeObj *pVnode = &vnodeList[vnodeId];
 
   while ((pEntry = readdir(pDir)) != NULL) {
@@ -1756,21 +1732,12 @@ void vnodeRecordAllFiles_rv(int32_t vnodeId, SQueryFilesInfo_rv *pVnodeFilesInfo
     int32_t firstFid = pVnode->fileId - pVnode->numOfFiles + 1;
     if (fid > pVnode->fileId || fid < firstFid) {
       //      dError("QInfo:%p error data file:%s in vid:%d, fid:%d, fid range:%d-%d", pQInfo, pEntry->d_name, vnodeId,
-      //      fid,
-      //             firstFid, pVnode->fileId);
+      //      fid, firstFid, pVnode->fileId);
       continue;
     }
 
     assert(fid >= 0 && vid >= 0);
     taosArrayPush(pVnodeFilesInfo->pFileInfo, &fid);
-    //    if (++pVnodeFilesInfo->numOfFiles > alloc) {
-    //      alloc = alloc << 1U;
-    //      pVnodeFilesInfo->pFileInfo = realloc(pVnodeFilesInfo->pFileInfo, alloc * sizeof(SHeaderFileInfo));
-    //      memset(&pVnodeFilesInfo->pFileInfo[alloc >> 1U], 0, (alloc >> 1U) * sizeof(SHeaderFileInfo));
-    //    }
-
-    //    int32_t index = pVnodeFilesInfo->numOfFiles - 1;
-    //    vnodeStoreFileId(pVnodeFilesInfo, fid, index);
   }
 
   closedir(pDir);
@@ -1948,23 +1915,62 @@ SBlockInfo getBlockInfo(SQueryRuntimeEnv *pRuntimeEnv) {
   return getBlockBasicInfo(pRuntimeEnv, pBlock, blockType);
 }
 
-SDataBlockInfo getBlockInfo_(STsdbQueryHandle *pQueryHandle) {
-  //todo check the timestamp value
-  
+SDataBlockInfo getTrueBlockInfo(STsdbQueryHandle *pQueryHandle) {
+  // todo check the timestamp value
   void *         pBlock = NULL;
   SDataBlockInfo info = {{0}, 0};
 
-  if (pQueryHandle->cur.fileId > 0) {
-    pBlock = getDiskDataBlock_(pQueryHandle, pQueryHandle->cur.slot);
+  SQueryHandlePos *cur = &pQueryHandle->cur;
+
+  if (cur->fileId > 0) {
+    pBlock = getDiskDataBlock_(pQueryHandle, cur->slot);
 
     SCompBlock *pDiskBlock = (SCompBlock *)pBlock;
-
     info.window.skey = pDiskBlock->keyFirst;
     info.window.ekey = pDiskBlock->keyLast;
     info.size = pDiskBlock->numOfPoints;
     info.numOfCols = pDiskBlock->numOfCols;
   } else {
-    pBlock = getCacheDataBlock_(pQueryHandle, taosArrayGet(pQueryHandle->pMeterObjList, 0), pQueryHandle->cur.slot);
+    pBlock = getCacheDataBlock_(pQueryHandle, taosArrayGet(pQueryHandle->pTableList, 0), pQueryHandle->cur.slot);
+
+    SCacheBlock *pCacheBlock = (SCacheBlock *)pBlock;
+
+    info.window.skey = getTimestampInCacheBlock_(pQueryHandle->tsBuf, pCacheBlock, 0);
+    info.window.ekey = getTimestampInCacheBlock_(pQueryHandle->tsBuf, pCacheBlock, pCacheBlock->numOfPoints - 1);
+    info.size = pCacheBlock->numOfPoints;
+    info.numOfCols = pCacheBlock->pMeterObj->numOfColumns;
+  }
+
+  assert(pBlock != NULL);
+  return info;
+}
+
+SDataBlockInfo getBlockInfo_(STsdbQueryHandle *pQueryHandle) {
+  // todo check the timestamp value
+  void *         pBlock = NULL;
+  SDataBlockInfo info = {{0}, 0};
+
+  SQueryHandlePos *cur = &pQueryHandle->cur;
+
+  if (cur->fileId > 0) {
+    pBlock = getDiskDataBlock_(pQueryHandle, cur->slot);
+
+    SCompBlock *pDiskBlock = (SCompBlock *)pBlock;
+    if (pQueryHandle->realNumOfRows == pDiskBlock->numOfPoints) {//.pos == 0 && QUERY_IS_ASC_QUERY_RV(pQueryHandle->order)) {
+      info.window.skey = pDiskBlock->keyFirst;
+      info.window.ekey = pDiskBlock->keyLast;
+      info.size = pDiskBlock->numOfPoints;
+      info.numOfCols = pDiskBlock->numOfCols;
+    } else {  // this block must have been loaded into buffer
+      info.size = pQueryHandle->realNumOfRows;
+      TSKEY *tsArray = (TSKEY *)pQueryHandle->tsBuf->data;
+      
+      info.window.skey = tsArray[0];
+      info.window.ekey = tsArray[info.size - 1];
+      info.numOfCols = pDiskBlock->numOfCols;
+    }
+  } else {
+    pBlock = getCacheDataBlock_(pQueryHandle, taosArrayGet(pQueryHandle->pTableList, 0), pQueryHandle->cur.slot);
 
     SCacheBlock *pCacheBlock = (SCacheBlock *)pBlock;
 
@@ -1974,7 +1980,7 @@ SDataBlockInfo getBlockInfo_(STsdbQueryHandle *pQueryHandle) {
     info.numOfCols = pCacheBlock->pMeterObj->numOfColumns;
   }
   assert(pBlock != NULL);
-  
+
   return info;
 }
 
@@ -2023,6 +2029,64 @@ char *getDataBlocks(SQueryRuntimeEnv *pRuntimeEnv, SArithmeticSupport *sas, int3
        *  So, the validation of required column in cache with the corresponding meter schema is reinforced.
        */
       dataBlock = doGetDataBlocks(pQuery, pRuntimeEnv->colDataBuffer, pCol->colIdxInBuf);
+    }
+  }
+
+  return dataBlock;
+}
+
+char *getDataBlocks_(SQueryRuntimeEnv *pRuntimeEnv, SArithmeticSupport *sas, int32_t col, int32_t size,
+                     SArray *pDataBlock) {
+  SQuery *        pQuery = pRuntimeEnv->pQuery;
+  SQLFunctionCtx *pCtx = pRuntimeEnv->pCtx;
+
+  char *dataBlock = NULL;
+
+  int32_t functionId = pQuery->pSelectExpr[col].pBase.functionId;
+
+  if (functionId == TSDB_FUNC_ARITHM) {
+    sas->pExpr = &pQuery->pSelectExpr[col];
+
+    // set the start offset to be the lowest start position, no matter asc/desc query order
+    if (QUERY_IS_ASC_QUERY(pQuery)) {
+      pCtx->startOffset = pQuery->pos;
+    } else {
+      pCtx->startOffset = pQuery->pos - (size - 1);
+    }
+
+    for (int32_t i = 0; i < pQuery->numOfCols; ++i) {
+      SColumnInfo *pColMsg = &pQuery->colList[i].data;
+      char *       pData = doGetDataBlocks(pQuery, pRuntimeEnv->colDataBuffer, pQuery->colList[i].colIdxInBuf);
+
+      sas->elemSize[i] = pColMsg->bytes;
+      sas->data[i] = pData + pCtx->startOffset * sas->elemSize[i];  // start from the offset
+    }
+
+    sas->numOfCols = pQuery->numOfCols;
+    sas->offset = 0;
+  } else {  // other type of query function
+    SColIndexEx *pCol = &pQuery->pSelectExpr[col].pBase.colInfo;
+    if (TSDB_COL_IS_TAG(pCol->flag)) {
+      dataBlock = NULL;
+    } else {
+      /*
+       *  the colIdx is acquired from the first meter of all qualified meters in this vnode during query prepare stage,
+       *  the remain meter may not have the required column in cache actually.
+       *  So, the validation of required column in cache with the corresponding meter schema is reinforced.
+       */
+
+      if (pDataBlock == NULL) {
+        return NULL;
+      }
+
+      int32_t numOfCols = taosArrayGetSize(pDataBlock);
+      for (int32_t i = 0; i < numOfCols; ++i) {
+        SColumnInfoEx_ *p = taosArrayGet(pDataBlock, i);
+        if (pCol->colId == p->info.colId) {
+          dataBlock = p->pData->data;
+          break;
+        }
+      }
     }
   }
 
@@ -2278,8 +2342,8 @@ int32_t getNextDataFileCompInfo(SQueryRuntimeEnv *pRuntimeEnv, SMeterObj *pMeter
   return fileIndex;
 }
 
-int32_t getNextDataFileCompInfo_(STsdbQueryHandle *pQueryHandle, SQueryHandlePos *pCur, SQueryFilesInfo_rv *pVnodeFilesInfo,
-                                 int32_t step) {
+int32_t getNextDataFileCompInfo_(STsdbQueryHandle *pQueryHandle, SQueryHandlePos *pCur,
+                                 SQueryFilesInfo_rv *pVnodeFilesInfo, int32_t step) {
   pCur->fileId += step;
 
   int32_t fileIndex = 0;
@@ -2301,7 +2365,7 @@ int32_t getNextDataFileCompInfo_(STsdbQueryHandle *pQueryHandle, SQueryHandlePos
     }
 
     // failed to mmap header file into memory will cause the retrieval of compblock info failed
-    SMeterObj* pMeterObj = *(SMeterObj**) taosArrayGet(pQueryHandle->pMeterObjList, 0);
+    SMeterObj *pMeterObj = *(SMeterObj **)taosArrayGet(pQueryHandle->pTableList, 0);
     if (vnodeGetCompBlockInfo_(pQueryHandle, pMeterObj, fileIndex) > 0) {
       break;
     }
@@ -2869,19 +2933,20 @@ int64_t getQueryStartPositionInCache(SQueryRuntimeEnv *pRuntimeEnv, int32_t *slo
   return nextKey;
 }
 
-int64_t getQueryStartPositionInCache_rv(STsdbQueryHandle *pQueryHandle, int32_t *slot, int32_t *pos, bool ignoreQueryRange) {
+int64_t getQueryStartPositionInCache_rv(STsdbQueryHandle *pQueryHandle, int32_t *slot, int32_t *pos,
+                                        bool ignoreQueryRange) {
   //  pQuery->fileId = -1;
   //  vnodeFreeFieldsEx(pRuntimeEnv);
 
   // keep in-memory cache status in local variables in case that it may be changed by write operation
-  SMeterObj* pTable = *(SMeterObj**) taosArrayGet(pQueryHandle->pMeterObjList, 0);
+  SMeterObj *pTable = *(SMeterObj **)taosArrayGet(pQueryHandle->pTableList, 0);
   getBasicCacheInfoSnapshot_(pQueryHandle, pTable->pCache, pTable->vnode);
 
   SCacheInfo *pCacheInfo = (SCacheInfo *)pTable->pCache;
-    if (pCacheInfo == NULL || pCacheInfo->cacheBlocks == NULL || pQueryHandle->numOfCacheBlocks == 0) {
-//      setQueryStatus(pQuery, QUERY_NO_DATA_TO_CHECK);
-      return -1;
-    }
+  if (pCacheInfo == NULL || pCacheInfo->cacheBlocks == NULL || pQueryHandle->numOfCacheBlocks == 0) {
+    //      setQueryStatus(pQuery, QUERY_NO_DATA_TO_CHECK);
+    return -1;
+  }
 
   //  assert((pQuery->lastKey >= pQuery->skey && QUERY_IS_ASC_QUERY(pQuery)) ||
   //      (pQuery->lastKey <= pQuery->skey && !QUERY_IS_ASC_QUERY(pQuery)));
@@ -2895,8 +2960,8 @@ int64_t getQueryStartPositionInCache_rv(STsdbQueryHandle *pQueryHandle, int32_t 
   /* here we actual start to query from pQuery->lastKey */
   //  pQuery->skey = pQueryHandle->lastKey;
 
-  (*slot) = binarySearchInCacheBlk_(pCacheInfo, pQueryHandle->order, pQueryHandle->lastKey, TSDB_KEYSIZE, pQueryHandle->firstSlot,
-                                    pQueryHandle->currentSlot);
+  (*slot) = binarySearchInCacheBlk_(pCacheInfo, pQueryHandle->order, pQueryHandle->lastKey, TSDB_KEYSIZE,
+                                    pQueryHandle->firstSlot, pQueryHandle->currentSlot);
 
   /* locate the first point of which time stamp is no less than pQuery->skey */
   __block_search_fn_t searchFn = vnodeSearchKeyFunc[0];
@@ -3459,7 +3524,6 @@ SCacheBlock *getCacheDataBlock_(STsdbQueryHandle *pQueryHandle, SMeterObj *pMete
     return NULL;
   }
 
-  //  vnodeFreeFields(pQuery);
   getBasicCacheInfoSnapshot_(pQueryHandle, pCacheInfo, pMeterObj->vnode);
 
   SCacheBlock *pBlock = pCacheInfo->cacheBlocks[slot];
@@ -3481,11 +3545,8 @@ SCacheBlock *getCacheDataBlock_(STsdbQueryHandle *pQueryHandle, SMeterObj *pMete
   }
 
   // the accessed cache block has been loaded already, return directly
-  if (vnodeIsDatablockLoaded_(&pQueryHandle->cur, &pQueryHandle->dataBlockLoadInfo, pMeterObj, -1, true) ==
+  if (vnodeIsDatablockLoaded_(&pQueryHandle->cur, &pQueryHandle->dataBlockLoadInfo, pMeterObj, NULL) ==
       DISK_BLOCK_NO_NEED_TO_LOAD) {
-    //    TSKEY skey = getTimestampInCacheBlock(pRuntimeEnv, pBlock, 0);
-    //    TSKEY ekey = getTimestampInCacheBlock(pRuntimeEnv, pBlock, pBlock->numOfPoints - 1);
-
     TSKEY skey = getTimestampInCacheBlock_(pQueryHandle->tsBuf, pBlock, 0);
     TSKEY ekey = getTimestampInCacheBlock_(pQueryHandle->tsBuf, pBlock, pBlock->numOfPoints - 1);
 
@@ -3535,23 +3596,29 @@ SCacheBlock *getCacheDataBlock_(STsdbQueryHandle *pQueryHandle, SMeterObj *pMete
 
   // keep the data from in cache into the temporarily allocated buffer
   for (int32_t i = 0; i < QH_GET_NUM_OF_COLS(pQueryHandle); ++i) {
-    SColumnInfoEx *pColumnInfoEx = taosArrayGet(pQueryHandle->pColumns, i);
+    SColumnInfoEx_ *pColumnInfoEx = taosArrayGet(pQueryHandle->pColumns, i);
 
-    int16_t columnIndex = pColumnInfoEx->colIdx;
-    int16_t columnIndexInBuf = pColumnInfoEx->colIdxInBuf;
+    //    int16_t columnIndex = pColumnInfoEx->colIdx;
+    //    int16_t columnIndexInBuf = pColumnInfoEx->colIdxInBuf;
 
-    SColumn *pCol = &pMeterObj->schema[columnIndex];
+    SColumn *pCol = NULL;
+    int16_t  bytes = pColumnInfoEx->info.bytes;
+    int16_t  type = pColumnInfoEx->info.type;
 
-    int16_t bytes = pCol->bytes;
-    int16_t type = pCol->type;
+    char *  dst = pColumnInfoEx->pData->data;
+    int32_t index = -1;
 
-    char *dst = pQueryHandle->colDataBuffer[columnIndexInBuf]->data;
+    for (int32_t j = 0; j < pMeterObj->numOfColumns; ++j) {
+      SColumn *pColumn = &pMeterObj->schema[j];
+      if (pColumn->colId == pColumnInfoEx->info.colId) {
+        pCol = pColumn;
+        break;
+      }
+    }
 
-    if (pColumnInfoEx->colIdx != -1) {
-      assert(pCol->colId == pColumnInfoEx->data.colId && bytes == pColumnInfoEx->data.bytes &&
-             type == pColumnInfoEx->data.type);
-
-      memcpy(dst, pBlock->offset[columnIndex] + offset * bytes, numOfPoints * bytes);
+    if (index >= 0) {
+      assert(bytes == pCol->bytes && type == pCol->type);
+      memcpy(dst, pBlock->offset[index] + offset * bytes, numOfPoints * bytes);
     } else {
       setNullN(dst, type, bytes, numOfPoints);
     }
@@ -3945,6 +4012,8 @@ void setTimestampRange(SQueryRuntimeEnv *pRuntimeEnv, int64_t stime, int64_t eti
 
 /////////////////////////////////////////////////////////////////////////////////////////////
 // new api
+static void filterDataInDataBlock(STsdbQueryHandle *pQueryHandle, SArray *sa, int32_t numOfPoints);
+
 bool getQualifiedDataBlock_rv(STsdbQueryHandle *pQueryHandle, int32_t type) {
   int32_t blkIdx = -1;
   int32_t fid = -1;
@@ -3954,8 +4023,8 @@ bool getQualifiedDataBlock_rv(STsdbQueryHandle *pQueryHandle, int32_t type) {
   TSKEY key = pQueryHandle->lastKey;
 
   SQueryHandlePos *cur = &pQueryHandle->cur;
-  SMeterObj* pTable = *(SMeterObj**) taosArrayGet(pQueryHandle->pMeterObjList, 0);
-  
+  SMeterObj *      pTable = taosArrayGetP(pQueryHandle->pTableList, 0);
+
   cur->fileId = getFileIdFromKey(pTable->vnode, key) - step;
   __block_search_fn_t searchFn = vnodeSearchKeyFunc[0];  // vnodeBinarySearchKey;
 
@@ -3991,12 +4060,15 @@ bool getQualifiedDataBlock_rv(STsdbQueryHandle *pQueryHandle, int32_t type) {
   assert(blkIdx >= 0 && blkIdx < pQueryHandle->numOfBlocks);
 
   // load first data block into memory failed, caused by disk block error
-  bool blockLoaded = false;
+  bool    blockLoaded = false;
+  SArray *sa = NULL;
+
   while (blkIdx < pQueryHandle->numOfBlocks && blkIdx >= 0) {
     cur->slot = blkIdx;
+    sa = getDefaultLoadColumns(pQueryHandle, true);
+
     if (loadDataBlockIntoMem_(pQueryHandle, &pQueryHandle->pBlock[cur->slot], &pQueryHandle->pFields[cur->slot], fid,
-        true, true) == 0) {
-      //      SET_DATA_BLOCK_LOADED(pRuntimeEnv->blockStatus);
+                              sa) == 0) {
       blockLoaded = true;
       break;
     }
@@ -4017,111 +4089,76 @@ bool getQualifiedDataBlock_rv(STsdbQueryHandle *pQueryHandle, int32_t type) {
   cur->pos = searchFn(ptsBuf->data, pBlocks->numOfPoints, key, pQueryHandle->order);
   assert(cur->pos >= 0 && cur->fileId >= 0 && cur->slot >= 0);
 
+  filterDataInDataBlock(pQueryHandle, sa, pBlocks->numOfPoints);
   return true;
 }
 
-// static int32_t findStartPosition(STsdbQueryHandle *pQueryHandle) {
-//  __block_search_fn_t searchFn = vnodeSearchKeyFunc[0];//vnodeBinarySearchKey;
-//
-//  if (QUERY_IS_ASC_QUERY_RV(pQueryHandle->order)) {
-//    bool dataInFile = hasDataInDisk_rv(pQueryHandle->window, taosArrayGet(pQueryHandle->pMeterObjList, 0));
-//
-//    if (dataInFile && getQualifiedDataBlock(pMeterObj, pRuntimeEnv, QUERY_RANGE_GREATER_EQUAL, searchFn)) {
-//      TSKEY nextKey = getTimestampInDiskBlock(pRuntimeEnv, pQuery->pos);
-//      assert(nextKey >= pQuery->skey);
-//
-//      if (key != NULL) {
-//        *key = nextKey;
-//      }
-//
-//      return doGetQueryPos(nextKey, pSupporter, pPointInterpSupporter);
-//    }
-//
-//    // set no data in file
-//    pQuery->fileId = -1;
-//    SCacheInfo *pCacheInfo = (SCacheInfo *)pMeterObj->pCache;
-//
-//    /* if it is a interpolation query, the any points in cache that is greater than the query range is required */
-//    if (pCacheInfo == NULL || pCacheInfo->cacheBlocks == NULL || pCacheInfo->numOfBlocks == 0 || !dataInCache) {
-//      return false;
-//    }
-//
-//    TSKEY nextKey = getQueryStartPositionInCache(pRuntimeEnv, &pQuery->slot, &pQuery->pos, false);
-//
-//    if (key != NULL) {
-//      *key = nextKey;
-//    }
-//
-//    return doGetQueryPos(nextKey, pSupporter, pPointInterpSupporter);
-//
-//  } else {              // descending order
-//    if (dataInCache) {  // todo handle error
-//      TSKEY nextKey = getQueryStartPositionInCache(pRuntimeEnv, &pQuery->slot, &pQuery->pos, false);
-//      assert(nextKey == -1 || nextKey <= pQuery->skey);
-//
-//      if (key != NULL) {
-//        *key = nextKey;
-//      }
-//
-//      if (nextKey != -1) {  // find qualified data in cache
-//        if (nextKey >= pQuery->ekey) {
-//          return doSetDataInfo(pSupporter, pPointInterpSupporter, pMeterObj, nextKey);
-//        } else {
-//          /*
-//           * nextKey < pQuery->ekey && nextKey < pQuery->lastKey, query range is
-//           * larger than all data, abort
-//           *
-//           * NOTE: Interp query does not reach here, since for all interp query,
-//           * the query order is ascending order.
-//           */
-//          return false;
-//        }
-//      } else {  // all data in cache are greater than pQuery->skey, try file
-//      }
-//    }
-//
-//    if (dataInDisk && getQualifiedDataBlock(pMeterObj, pRuntimeEnv, QUERY_RANGE_LESS_EQUAL, searchFn)) {
-//      TSKEY nextKey = getTimestampInDiskBlock(pRuntimeEnv, pQuery->pos);
-//      assert(nextKey <= pQuery->skey);
-//
-//      if (key != NULL) {
-//        *key = nextKey;
-//      }
-//
-//      // key in query range. If not, no qualified in disk file
-//      if (nextKey >= pQuery->ekey) {
-//        return doSetDataInfo(pSupporter, pPointInterpSupporter, pMeterObj, nextKey);
-//      } else {  // In case of all queries, the value of false will be returned if key < pQuery->ekey
-//        return false;
-//      }
-//    }
-//  }
-//
-//  return false;
-//}
+void filterDataInDataBlock(STsdbQueryHandle *pQueryHandle, SArray *sa, int32_t numOfPoints) {
+  // only return the qualified data to client in terms of query time window, data rows in the same block but do not
+  // be included in the query time window will be discarded
+  SQueryHandlePos *cur = &pQueryHandle->cur;
+  if (cur->pos == 0) {  // no need to filter the unqualified rows
+    return;
+  }
+
+  SDataBlockInfo blockInfo = getTrueBlockInfo(pQueryHandle);
+
+  int32_t numOfCols = QH_GET_NUM_OF_COLS(pQueryHandle);
+
+  for (int32_t i = 0; i < taosArrayGetSize(sa); ++i) {
+    int16_t         colId = *(int16_t *)taosArrayGet(sa, i);
+    SColumnInfoEx_ *pCol = NULL;
+
+    for (int32_t j = 0; j < numOfCols; ++j) {
+      pCol = taosArrayGet(pQueryHandle->pColumns, j);
+      if (pCol->info.colId == colId) {
+        // for desc query, no need to move data blocks
+        if (QUERY_IS_ASC_QUERY_RV(pQueryHandle->order)) {
+          memmove(pCol->pData->data, ((char *)pCol->pData->data) + pCol->info.bytes * cur->pos,
+                  (numOfPoints - cur->pos) * pCol->info.bytes);
+        }
+
+        break;
+      }
+    }
+  }
+
+  //
+  __block_search_fn_t searchFn = vnodeSearchKeyFunc[0];  // vnodeBinarySearchKey;
+  
+  int32_t remain = numOfPoints - cur->pos;
+
+  if (pQueryHandle->window.ekey < blockInfo.window.ekey) {
+    int32_t endPos = searchFn(pQueryHandle->tsBuf->data, remain, pQueryHandle->window.ekey, 1);
+    pQueryHandle->realNumOfRows = (endPos - cur->pos) + 1;
+  } else {
+    pQueryHandle->realNumOfRows = (blockInfo.size - cur->pos) + 1;
+  }
+
+  assert(pQueryHandle->realNumOfRows <= blockInfo.size);
+}
 
 static bool findStartPosition_(STsdbQueryHandle *pQueryHandle) {
-  __block_search_fn_t searchFn = vnodeSearchKeyFunc[0];
   pQueryHandle->locateStart = true;
 
   if (QUERY_IS_ASC_QUERY_RV(pQueryHandle->order)) {
-    SMeterObj* pMeterObj = *(SMeterObj**) taosArrayGet(pQueryHandle->pMeterObjList, 0);
-    
+    SMeterObj *pMeterObj = *(SMeterObj **)taosArrayGet(pQueryHandle->pTableList, 0);
+
     bool hasData = hasDataInDisk_rv(pQueryHandle->window, pMeterObj);
     if (hasData) {
       hasData = getQualifiedDataBlock_rv(pQueryHandle, QUERY_RANGE_GREATER_EQUAL);
       if (hasData) {
-        TSKEY key = getTimestampInDiskBlock_(pQueryHandle, pQueryHandle->cur.pos);
-
+        pQueryHandle->start = pQueryHandle->cur;
         return true;
       }
     }
 
-    hasData = hasDataInCache_(pQueryHandle, taosArrayGet(pQueryHandle->pMeterObjList, 0));
+    hasData = hasDataInCache_(pQueryHandle, taosArrayGet(pQueryHandle->pTableList, 0));
     if (hasData) {
       TSKEY key = getQueryStartPositionInCache_rv(pQueryHandle, &pQueryHandle->cur.slot, &pQueryHandle->cur.pos, false);
     }
 
+    pQueryHandle->start = pQueryHandle->cur;
     return hasData;
   } else {  // descending order
             //    if (dataInCache) {  // todo handle error
@@ -4171,18 +4208,33 @@ static bool findStartPosition_(STsdbQueryHandle *pQueryHandle) {
 
 static int32_t doAllocateBuf(STsdbQueryHandle *pQueryHandle, int32_t rowsPerFileBlock);
 
-STsdbQueryHandle *tsdbQueryByTableId(STsdbQueryCond *pCond, SArray *pMeterObjList, SArray *pColumnInfo) {
+STsdbQueryHandle *tsdbQueryByTableId(STsdbQueryCond *pCond, SArray *pTableList, SArray *pColumnInfo) {
   STsdbQueryHandle *pQueryHandle = calloc(1, sizeof(STsdbQueryHandle));
   pQueryHandle->order = pCond->order;
   pQueryHandle->window = pCond->window;
 
   pQueryHandle->traverseOrder = pCond->order;
-  pQueryHandle->pMeterObjList = pMeterObjList;
+  pQueryHandle->pTableList = pTableList;
   pQueryHandle->pColumns = pColumnInfo;
+  pQueryHandle->needLoadData = false;
+
+  pQueryHandle->lastKey = pQueryHandle->window.skey;  // ascending query
 
   // malloc buffer in order to load data from file
-  SMeterObj *pMeterObj = *(SMeterObj**) taosArrayGet(pQueryHandle->pMeterObjList, 0);
-  if (doAllocateBuf(pQueryHandle, pMeterObj->pointsPerFileBlock) != TSDB_CODE_SUCCESS) {
+  SMeterObj *pTable = taosArrayGetP(pQueryHandle->pTableList, 0);
+  int32_t    numOfCols = taosArrayGetSize(pColumnInfo);
+
+  pQueryHandle->pColumns = taosArrayInit(numOfCols, sizeof(SColumnInfoEx_));
+  for (int32_t i = 0; i < numOfCols; ++i) {
+    SColumnInfoEx *pCol = taosArrayGet(pColumnInfo, i);
+    SColumnInfoEx_ pDest = {{0}, 0};
+
+    pDest.pData = calloc(1, sizeof(SData) + EXTRA_BYTES + pTable->pointsPerFileBlock * pCol->data.bytes);
+    pDest.info = pCol->data;
+    taosArrayPush(pQueryHandle->pColumns, &pDest);
+  }
+
+  if (doAllocateBuf(pQueryHandle, pTable->pointsPerFileBlock) != TSDB_CODE_SUCCESS) {
     return NULL;
   }
 
@@ -4190,27 +4242,15 @@ STsdbQueryHandle *tsdbQueryByTableId(STsdbQueryCond *pCond, SArray *pMeterObjLis
   vnodeInitDataBlockLoadInfo(&pQueryHandle->dataBlockLoadInfo);
   vnodeInitCompBlockLoadInfo(&pQueryHandle->compBlockLoadInfo);
 
-  vnodeRecordAllFiles_rv(pMeterObj->vnode, &pQueryHandle->vnodeFileInfo);
-  
+  vnodeRecordAllFiles_rv(pTable->vnode, &pQueryHandle->vnodeFileInfo);
+
   return pQueryHandle;
 }
 
-
 int32_t doAllocateBuf(STsdbQueryHandle *pQueryHandle, int32_t rowsPerFileBlock) {
-  // To make sure the start position of each buffer is aligned to 4bytes in 32-bit ARM system.
-  for (int32_t i = 0; i < QH_GET_NUM_OF_COLS(pQueryHandle); ++i) {
-    SColumnInfoEx* pColumn = taosArrayGet(pQueryHandle->pColumns, i);
-    int32_t bytes = pColumn->data.bytes;
-    
-    pQueryHandle->colDataBuffer[i] = calloc(1, sizeof(SData) + EXTRA_BYTES + rowsPerFileBlock * bytes);
-    if (pQueryHandle->colDataBuffer[i] == NULL) {
-      goto _error_clean;
-    }
-  }
-
   // record the maximum column width among columns of this meter/metric
-  SColumnInfoEx* pColumn = taosArrayGet(pQueryHandle->pColumns, 0);
-  
+  SColumnInfoEx *pColumn = taosArrayGet(pQueryHandle->pColumns, 0);
+
   int32_t maxColWidth = pColumn->data.bytes;
   for (int32_t i = 1; i < QH_GET_NUM_OF_COLS(pQueryHandle); ++i) {
     int32_t bytes = pColumn[i].data.bytes;
@@ -4221,9 +4261,9 @@ int32_t doAllocateBuf(STsdbQueryHandle *pQueryHandle, int32_t rowsPerFileBlock) 
 
   pQueryHandle->tsBuf = NULL;
   if (PRIMARY_TSCOL_REQUIRED(pQueryHandle->pColumns)) {
-    pQueryHandle->tsBuf = pQueryHandle->colDataBuffer[0];
+    pQueryHandle->tsBuf = ((SColumnInfoEx_ *)taosArrayGet(pQueryHandle->pColumns, 0))->pData;
   } else {
-    pQueryHandle->tsBuf = (SData *)malloc(rowsPerFileBlock * TSDB_KEYSIZE + sizeof(SData) + EXTRA_BYTES);
+    pQueryHandle->tsBuf = (SData *)calloc(1, rowsPerFileBlock * TSDB_KEYSIZE + sizeof(SData) + EXTRA_BYTES);
   }
 
   // only one unzip buffer required, since we can unzip each column one by one
@@ -4239,10 +4279,6 @@ int32_t doAllocateBuf(STsdbQueryHandle *pQueryHandle, int32_t rowsPerFileBlock) 
   return TSDB_CODE_SUCCESS;
 
 _error_clean:
-  for (int32_t i = 0; i < QH_GET_NUM_OF_COLS(pQueryHandle); ++i) {
-    tfree(pQueryHandle->colDataBuffer[i]);
-  }
-
   tfree(pQueryHandle->unzipBuffer);
   tfree(pQueryHandle->secondaryUnzipBuffer);
 
@@ -4253,33 +4289,146 @@ _error_clean:
   return TSDB_CODE_SERV_OUT_OF_MEMORY;
 }
 
-bool next(STsdbQueryHandle *pQueryHandle) {
+bool tsdbNextDataBlock(STsdbQueryHandle *pQueryHandle) {
   if (pQueryHandle == NULL) {
     return false;
+  }
+
+  if (pQueryHandle->needLoadData) {
+    if (pQueryHandle->cur.fileId == 0) {
+      pQueryHandle->cur = pQueryHandle->start;
+    }
+    
+    SQueryHandlePos *cur = &pQueryHandle->cur;
+
+    if (cur->fileId > 0) {  // file
+      SMeterObj *pTable = (SMeterObj *)taosArrayGetP(pQueryHandle->pTableList, 0);
+
+      SArray *sa = getDefaultLoadColumns(pQueryHandle, true);
+      vnodeGetCompBlockInfo_(pQueryHandle, pTable, cur->fileIndex);
+      loadDataBlockIntoMem_(pQueryHandle, &pQueryHandle->pBlock[cur->slot], &pQueryHandle->pFields[cur->slot],
+                            cur->fileIndex, sa);
+    } else {
+      // todo cache
+    }
+
+    pQueryHandle->needLoadData = false;
+    return true;
   }
 
   // the start position does not locate yet
   if (!pQueryHandle->locateStart) {
     return findStartPosition_(pQueryHandle);
   } else {
-    __block_search_fn_t searchFn = vnodeSearchKeyFunc[0];
-    moveToNextBlock_(pQueryHandle, 1, searchFn, false);
+    int32_t ret = moveToNextBlock_(pQueryHandle, 1, false);
+    return ret > 0;
   }
 }
 
-SDataBlockInfo tsdbRetrieveDataBlockInfo(STsdbQueryHandle *pQueryHandle){
-  return getBlockInfo_(pQueryHandle);
+SDataBlockInfo tsdbRetrieveDataBlockInfo(STsdbQueryHandle *pQueryHandle) { return getBlockInfo_(pQueryHandle); }
+
+static bool completedIncluded(STimeWindow *win, SDataBlockInfo *pBlockInfo) {
+  return (win->skey > pBlockInfo->window.skey || win->ekey < pBlockInfo->window.ekey);
 }
 
-int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SField **pBlockStatis) {
+int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SDataStatis **pBlockStatis) {
   int32_t slot = pQueryHandle->cur.slot;
-  loadDataBlockFieldsInfo_(pQueryHandle, &pQueryHandle->pBlock[pQueryHandle->cur.slot], &pQueryHandle->pFields[slot]);
-  
+
+  // cache data does not has the statistics info
+  if (pQueryHandle->cur.fileId < 0) {
+    *pBlockStatis = NULL;
+    return TSDB_CODE_SUCCESS;
+  }
+
+  // get current file block info
+  SDataBlockInfo blockInfo = getTrueBlockInfo(pQueryHandle);
+
+  // if the query time window does not completed cover this block, the statistics data will not return.
+  if (pQueryHandle->window.skey > blockInfo.window.skey || pQueryHandle->window.ekey < blockInfo.window.ekey) {
+    *pBlockStatis = NULL;
+    return TSDB_CODE_SUCCESS;
+  }
+
+  // load the file block info
+  loadDataBlockFieldsInfo_(pQueryHandle, &pQueryHandle->pBlock[slot], &pQueryHandle->pFields[slot]);
+
   *pBlockStatis = pQueryHandle->pFields[slot];
   return TSDB_CODE_SUCCESS;
 }
 
-SDataBlock *tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray* pIdList) {
-  loadDataBlockIntoMem_(pQueryHandle, &pQueryHandle->pBlock[pQueryHandle->cur.slot],
-                        &pQueryHandle->pFields[pQueryHandle->cur.slot], pQueryHandle->cur.fileIndex, true, true);
+static SArray *getColumnIdList(STsdbQueryHandle *pQueryHandle) {
+  int32_t numOfCols = QH_GET_NUM_OF_COLS(pQueryHandle);
+  SArray *pIdList = taosArrayInit(numOfCols, sizeof(int16_t));
+  for (int32_t i = 0; i < numOfCols; ++i) {
+    SColumnInfoEx_ *pCol = taosArrayGet(pQueryHandle->pColumns, i);
+
+    taosArrayPush(pIdList, &pCol->info.colId);
+  }
+
+  return pIdList;
+}
+
+SArray *getDefaultLoadColumns(STsdbQueryHandle *pQueryHandle, bool loadTS) {
+  SArray *pLocalIdList = getColumnIdList(pQueryHandle);
+
+  // check if the primary time stamp column needs to load
+  int16_t colId = *(int16_t *)taosArrayGet(pLocalIdList, 0);
+
+  // the primary timestamp column does not be included in the the specified load column list, add it
+  if (loadTS && colId != 0) {
+    int16_t columnId = 0;
+    taosArrayInsert(pLocalIdList, 0, &columnId);
+  }
+
+  return pLocalIdList;
+}
+
+SArray *tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList) {
+  int32_t slot = pQueryHandle->cur.slot;
+
+  // if the pIdList is NULL, all required columns are loaded into buffer
+  SArray *pLocalIdList = pIdList;
+  if (pIdList == NULL) {
+    pLocalIdList = getColumnIdList(pQueryHandle);
+  } else {
+    assert(taosArrayGetSize(pIdList) > 0);
+  }
+
+  // check if the primary time stamp column needs to load
+  SDataBlockInfo blockInfo = getTrueBlockInfo(pQueryHandle);
+
+  if (!completedIncluded(&pQueryHandle->window, &blockInfo)) {
+    int32_t colId = *(int32_t *)taosArrayGet(pLocalIdList, 0);
+
+    // the primary timestamp column does not be included in the the specified load column list, add it
+    if (colId != 0) {
+      int32_t columnId = 0;
+      taosArrayInsert(pLocalIdList, 0, &columnId);
+    }
+  }
+
+  loadDataBlockIntoMem_(pQueryHandle, &pQueryHandle->pBlock[slot], &pQueryHandle->pFields[slot],
+                        pQueryHandle->cur.fileIndex, pLocalIdList);
+
+  return pQueryHandle->pColumns;
+}
+
+int32_t tsdbDataBlockSeek(STsdbQueryHandle *pQueryHandle, tsdbPos_t pos) {
+  if (pos == NULL || pQueryHandle == NULL) {
+    return -1;
+  }
+
+  pQueryHandle->cur = *(SQueryHandlePos *)pos;
+  pQueryHandle->needLoadData = true;
+}
+
+tsdbPos_t tsdbDataBlockTell(STsdbQueryHandle *pQueryHandle) {
+  if (pQueryHandle == NULL) {
+    return NULL;
+  }
+
+  SQueryHandlePos *pPos = calloc(1, sizeof(SQueryHandlePos));
+  memcpy(pPos, &pQueryHandle->cur, sizeof(SQueryHandlePos));
+
+  return pPos;
 }

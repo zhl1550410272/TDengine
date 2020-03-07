@@ -1140,7 +1140,10 @@ int32_t parseSelectClause(SSqlCmd* pCmd, int32_t clauseIndex, tSQLExprList* pSel
   const char* msg5 = "invalid function name";
 
   SQueryInfo* pQueryInfo = tscGetQueryInfoDetail(pCmd, clauseIndex);
-
+  
+  SColumnIndex x = {.tableIndex = 0, .columnIndex = PRIMARYKEY_TIMESTAMP_COL_INDEX};
+  tscColumnBaseInfoInsert(pQueryInfo, &x);
+  
   for (int32_t i = 0; i < pSelection->nExpr; ++i) {
     int32_t       outputIndex = pQueryInfo->exprsInfo.numOfExprs;
     tSQLExprItem* pItem = &pSelection->a[i];

@@ -994,8 +994,6 @@ static void vnodeSingleTableFixedOutputProcessor(SQInfo *pQInfo) {
   SQuery *          pQuery = &pQInfo->query;
   SQueryRuntimeEnv *pRuntimeEnv = &pQInfo->pTableQuerySupporter->runtimeEnv;
 
-//  assert(pQuery->slot >= 0 && pQuery->pos >= 0);
-
   vnodeScanAllData(pRuntimeEnv);
   doFinalizeResult(pRuntimeEnv);
 
@@ -1083,7 +1081,7 @@ static void vnodeSingleTableMultiOutputProcessor(SQInfo *pQInfo) {
 
 static void vnodeSingleMeterIntervalMainLooper(STableQuerySupportObj *pSupporter, SQueryRuntimeEnv *pRuntimeEnv) {
   SQuery *pQuery = pRuntimeEnv->pQuery;
-
+  
   while (1) {
     initCtxOutputBuf(pRuntimeEnv);
     vnodeScanAllData(pRuntimeEnv);
