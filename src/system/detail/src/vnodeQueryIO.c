@@ -1931,10 +1931,10 @@ SDataBlockInfo getTrueBlockInfo(STsdbQueryHandle *pQueryHandle) {
   } else {
     pBlock = getCacheDataBlock_(pQueryHandle, taosArrayGetP(pQueryHandle->pTableList, 0), pQueryHandle->cur.slot);
     assert(pBlock != NULL);
-    
-    SCacheBlock *pCacheBlock = (SCacheBlock *)pBlock;
-    SColumnInfoEx_* pColInfo = taosArrayGet(pQueryHandle->pColumns, 0);
-    
+
+    SCacheBlock *   pCacheBlock = (SCacheBlock *)pBlock;
+    SColumnInfoEx_ *pColInfo = taosArrayGet(pQueryHandle->pColumns, 0);
+
     info.window.skey = getTimestampInCacheBlock_(pColInfo->pData, pCacheBlock, 0);
     info.window.ekey = getTimestampInCacheBlock_(pColInfo->pData, pCacheBlock, pCacheBlock->numOfPoints - 1);
     info.size = pCacheBlock->numOfPoints;
@@ -1978,7 +1978,7 @@ SDataBlockInfo getBlockInfo_(STsdbQueryHandle *pQueryHandle) {
     info.size = pCacheBlock->numOfPoints;
     info.numOfCols = pCacheBlock->pMeterObj->numOfColumns;
   }
-  
+
   assert(pBlock != NULL);
 
   return info;
@@ -2969,8 +2969,8 @@ int64_t getQueryStartPositionInCache_rv(STsdbQueryHandle *pQueryHandle, int32_t 
     return -1;
   }
 
-  SColumnInfoEx_* pColInfo = taosArrayGet(pQueryHandle->pColumns, 0);
-  
+  SColumnInfoEx_ *pColInfo = taosArrayGet(pQueryHandle->pColumns, 0);
+
   int64_t nextKey = getTimestampInCacheBlock_(pColInfo->pData, pBlock, *pos);
   return nextKey;
 }
@@ -3621,7 +3621,7 @@ SCacheBlock *getCacheDataBlock_(STsdbQueryHandle *pQueryHandle, SMeterObj *pMete
    * the accessed cache block still belongs to current meterObj, go on
    * update the load data block info
    */
-  SArray* sa = getDefaultLoadColumns(pQueryHandle, true);
+  SArray *sa = getDefaultLoadColumns(pQueryHandle, true);
   vnodeSetDataBlockInfoLoaded_(pQueryHandle, pMeterObj, -1, sa, &pQueryHandle->cur);
 
   TSKEY skey = getTimestampInCacheBlock_(pQueryHandle->tsBuf, pNewBlock, 0);
@@ -4077,7 +4077,7 @@ void filterDataInDataBlock(STsdbQueryHandle *pQueryHandle, SArray *sa, int32_t n
   // only return the qualified data to client in terms of query time window, data rows in the same block but do not
   // be included in the query time window will be discarded
   SQueryHandlePos *cur = &pQueryHandle->cur;
-  
+
   // no need to filter the unqualified rows
   if ((cur->pos == 0 && QUERY_IS_ASC_QUERY_RV(pQueryHandle->order)) ||
       (cur->pos == numOfPoints - 1 && !QUERY_IS_ASC_QUERY_RV(pQueryHandle->order))) {
@@ -4124,7 +4124,7 @@ void filterDataInDataBlock(STsdbQueryHandle *pQueryHandle, SArray *sa, int32_t n
 
 static bool findStartPosition_(STsdbQueryHandle *pQueryHandle) {
   pQueryHandle->locateStart = true;
-  SMeterObj *pMeterObj = *(SMeterObj **)taosArrayGet(pQueryHandle->pTableList, 0);
+  SMeterObj *pMeterObj = taosArrayGetP(pQueryHandle->pTableList, 0);
 
   if (QUERY_IS_ASC_QUERY_RV(pQueryHandle->order)) {
     bool hasData = hasDataInDisk_rv(pQueryHandle->window, pMeterObj, pQueryHandle->order);
@@ -4177,7 +4177,6 @@ STsdbQueryHandle *tsdbQueryByTableId(STsdbQueryCond *pCond, SArray *pTableList, 
   pQueryHandle->pTableList = pTableList;
   pQueryHandle->pColumns = pColumnInfo;
   pQueryHandle->loadDataAfterSeek = false;
-  pQueryHandle->cacheBlockLoaded = false;
 
   pQueryHandle->lastKey = pQueryHandle->window.skey;  // ascending query
 
@@ -4261,7 +4260,7 @@ bool tsdbNextDataBlock(STsdbQueryHandle *pQueryHandle) {
     }
 
     SQueryHandlePos *cur = &pQueryHandle->cur;
-    SMeterObj *pTable = (SMeterObj *)taosArrayGetP(pQueryHandle->pTableList, 0);
+    SMeterObj *      pTable = (SMeterObj *)taosArrayGetP(pQueryHandle->pTableList, 0);
 
     if (cur->fileId > 0) {  // file
       SArray *sa = getDefaultLoadColumns(pQueryHandle, true);
@@ -4304,7 +4303,11 @@ int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SDataSta
   SDataBlockInfo blockInfo = getTrueBlockInfo(pQueryHandle);
 
   // if the query time window does not completed cover this block, the statistics data will not return.
-  if (pQueryHandle->window.skey > blockInfo.window.skey || pQueryHandle->window.ekey < blockInfo.window.ekey) {
+  STimeWindow *pw = &pQueryHandle->window;
+  if (((pw->skey > blockInfo.window.skey || pw->ekey < blockInfo.window.ekey) &&
+       QUERY_IS_ASC_QUERY_RV(pQueryHandle->order)) ||
+      ((pw->ekey > blockInfo.window.skey || pw->skey < blockInfo.window.ekey) &&
+       !QUERY_IS_ASC_QUERY_RV(pQueryHandle->order))) {
     *pBlockStatis = NULL;
     return TSDB_CODE_SUCCESS;
   }
@@ -4312,21 +4315,21 @@ int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SDataSta
   // load the file block info
   loadDataBlockFieldsInfo_(pQueryHandle, &pQueryHandle->pBlock[slot], &pQueryHandle->pFields[slot]);
   (*pBlockStatis) = calloc(blockInfo.numOfCols, sizeof(SDataStatis));
-  
-  for(int32_t i = 0; i < blockInfo.numOfCols; ++i) {
-    SField* pField = &pQueryHandle->pFields[slot][i];
-    
+
+  for (int32_t i = 0; i < blockInfo.numOfCols; ++i) {
+    SField *pField = &pQueryHandle->pFields[slot][i];
+
     (*pBlockStatis)[i].colId = pField->colId;
     (*pBlockStatis)[i].numOfNull = pField->numOfNullPoints;
     (*pBlockStatis)[i].sum = pField->sum;
-    
+
     (*pBlockStatis)[i].min = pField->min;
     (*pBlockStatis)[i].max = pField->max;
-  
+
     (*pBlockStatis)[i].minIndex = pField->minIndex;
     (*pBlockStatis)[i].maxIndex = pField->maxIndex;
   }
-  
+
   return TSDB_CODE_SUCCESS;
 }
 
@@ -4362,7 +4365,7 @@ SArray *tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList) {
   if (pQueryHandle->cur.fileId < 0) {
     return pQueryHandle->pColumns;
   }
-  
+
   int32_t slot = pQueryHandle->cur.slot;
 
   // if the pIdList is NULL, all required columns are loaded into buffer
@@ -4397,7 +4400,7 @@ int32_t tsdbDataBlockSeek(STsdbQueryHandle *pQueryHandle, tsdbPos_t pos) {
     return -1;
   }
 
-  pQueryHandle->cur = *(SQueryHandlePos *) pos;
+  pQueryHandle->cur = *(SQueryHandlePos *)pos;
   pQueryHandle->loadDataAfterSeek = true;
 }
 
@@ -4410,4 +4413,93 @@ tsdbPos_t tsdbDataBlockTell(STsdbQueryHandle *pQueryHandle) {
   memcpy(pPos, &pQueryHandle->cur, sizeof(SQueryHandlePos));
 
   return pPos;
+}
+
+static bool doFindGreaterEqualData(STsdbQueryHandle *pQueryHandle) {
+  SMeterObj *pTable = taosArrayGetP(pQueryHandle->pTableList, 0);
+
+  bool hasData = hasDataInDisk_rv(pQueryHandle->window, pTable, pQueryHandle->order);
+  if (hasData) {
+    hasData = getQualifiedDataBlock_rv(pQueryHandle, QUERY_RANGE_GREATER_EQUAL);
+    if (hasData) {
+      pQueryHandle->start = pQueryHandle->cur;
+      return true;
+    }
+  }
+
+  hasData = hasDataInCache_(pQueryHandle, taosArrayGetP(pQueryHandle->pTableList, 0));
+  if (hasData) {
+    TSKEY key = getQueryStartPositionInCache_rv(pQueryHandle, &pQueryHandle->cur.slot, &pQueryHandle->cur.pos, false);
+  }
+
+  pQueryHandle->start = pQueryHandle->cur;
+  return hasData;
+}
+
+static bool doFindLessEqualData(STsdbQueryHandle *pQueryHandle) {
+  SMeterObj *pTable = taosArrayGetP(pQueryHandle->pTableList, 0);
+
+  bool hasData = hasDataInCache_(pQueryHandle, taosArrayGetP(pQueryHandle->pTableList, 0));
+  if (hasData) {
+    int64_t ret = getQueryStartPositionInCache_rv(pQueryHandle, &pQueryHandle->cur.slot, &pQueryHandle->cur.pos, false);
+    if (ret > 0) {
+      pQueryHandle->start = pQueryHandle->cur;
+      return true;
+    }
+  }
+
+  hasData = hasDataInDisk_rv(pQueryHandle->window, pTable, pQueryHandle->order);
+  if (hasData) {
+    hasData = getQualifiedDataBlock_rv(pQueryHandle, QUERY_RANGE_LESS_EQUAL);
+    if (hasData) {
+      pQueryHandle->start = pQueryHandle->cur;
+    }
+  }
+
+  return hasData;
+}
+
+SArray *tsdbRetrieveDataRow(STsdbQueryHandle *pQueryHandle, SArray *pIdList, SQueryRowCond *pCond) {
+  assert(pCond->rel == TSDB_TS_LESS_EQUAL || pCond->rel == TSDB_TS_GREATER_EQUAL);
+
+  if (pQueryHandle == NULL) {
+    return NULL;
+  }
+
+  STimeWindow     w = pQueryHandle->window;
+  int32_t         order = pQueryHandle->order;
+  SQueryHandlePos cur = pQueryHandle->cur;
+  SQueryHandlePos start = pQueryHandle->start;
+
+  TSKEY lastKey = pQueryHandle->lastKey;
+
+  if (pCond->rel == TSDB_TS_LESS_EQUAL) {
+    STimeWindow win = {.skey = pCond->ts, .ekey = 0};
+    pQueryHandle->window = win;
+    pQueryHandle->order = TSQL_SO_DESC;
+
+    bool ret = doFindLessEqualData(pQueryHandle);
+    if (ret) {
+      SArray *r = tsdbRetrieveDataBlock(pQueryHandle, pIdList);
+      assert(0);
+    }
+  } else {
+    STimeWindow win = {.skey = pCond->ts, .ekey = INT64_MAX};
+    pQueryHandle->window = win;
+    pQueryHandle->lastKey = win.skey;
+
+    pQueryHandle->order = TSQL_SO_ASC;
+    bool ret = doFindGreaterEqualData(pQueryHandle);
+    if (ret) {
+      SArray *r = tsdbRetrieveDataBlock(pQueryHandle, pIdList);
+
+      pQueryHandle->window = w;
+      pQueryHandle->order = order;
+      pQueryHandle->cur = cur;
+      pQueryHandle->start = start;
+      pQueryHandle->lastKey = lastKey;
+
+      return r;
+    }
+  }
 }

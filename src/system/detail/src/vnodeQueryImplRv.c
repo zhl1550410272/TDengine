@@ -678,7 +678,7 @@ static int32_t blockwiseApplyAllFunctions(SQueryRuntimeEnv *pRuntimeEnv, SDataSt
     primaryKeyCol = (TSKEY *)(pColInfo->pData->data);
   }
 
-  pQuery->pos = 0;
+  pQuery->pos = QUERY_IS_ASC_QUERY(pQuery)? 0:pDataBlockInfo->size - 1;
   int64_t prevNumOfRes = getNumOfResult(pRuntimeEnv);
 
   SArithmeticSupport *sasArray = calloc((size_t)pQuery->numOfOutputCols, sizeof(SArithmeticSupport));
@@ -690,8 +690,8 @@ static int32_t blockwiseApplyAllFunctions(SQueryRuntimeEnv *pRuntimeEnv, SDataSt
     bool         hasNull = hasNullVal_(pQuery, k, pDataBlockInfo, pStatis, &tpField);
     char *       dataBlock = getDataBlocks_(pRuntimeEnv, &sasArray[k], k, pDataBlockInfo->size, pDataBlock);
 
-    setExecParams(pQuery, &pCtx[k], dataBlock, (char *)primaryKeyCol, pDataBlockInfo->size, functionId, tpField, hasNull,
-                  &sasArray[k], pRuntimeEnv->scanFlag);
+    setExecParams(pQuery, &pCtx[k], dataBlock, (char *)primaryKeyCol, pDataBlockInfo->size, functionId, tpField,
+                  hasNull, &sasArray[k], pRuntimeEnv->scanFlag);
   }
 
   int32_t step = GET_FORWARD_DIRECTION_FACTOR(pQuery->order.order);
@@ -704,8 +704,9 @@ static int32_t blockwiseApplyAllFunctions(SQueryRuntimeEnv *pRuntimeEnv, SDataSt
       return 0;
     }
 
-    TSKEY ekey = reviseWindowEkey(pQuery, &win);
-    int32_t forwardStep = getNumOfRowsInTimeWindow(pQuery, pDataBlockInfo, primaryKeyCol, pQuery->pos, ekey, searchFn, true);
+    TSKEY   ekey = reviseWindowEkey(pQuery, &win);
+    int32_t forwardStep =
+        getNumOfRowsInTimeWindow(pQuery, pDataBlockInfo, primaryKeyCol, pQuery->pos, ekey, searchFn, true);
 
     SWindowStatus *pStatus = getTimeWindowResStatus(pWindowResInfo, curTimeWindow(pWindowResInfo));
     doBlockwiseApplyFunctions(pRuntimeEnv, pStatus, &win, pQuery->pos, forwardStep);
@@ -2801,16 +2802,32 @@ static int64_t doScanAllDataBlocks(SQueryRuntimeEnv *pRuntimeEnv) {
       TSKEY skey1, ekey1;
       TSKEY windowSKey = 0, windowEKey = 0;
 
-      doGetAlignedIntervalQueryRangeImpl(pQuery, blockInfo.window.skey, blockInfo.window.skey,
-                                         pQueryHandle->window.ekey, &skey1, &ekey1, &windowSKey, &windowEKey);
-      pRuntimeEnv->windowResInfo.startTime = windowSKey;
-
       if (QUERY_IS_ASC_QUERY(pQuery)) {
+        doGetAlignedIntervalQueryRangeImpl(pQuery, blockInfo.window.skey, blockInfo.window.skey,
+                                           pQueryHandle->window.ekey, &skey1, &ekey1, &windowSKey, &windowEKey);
+        pRuntimeEnv->windowResInfo.startTime = windowSKey;
         pRuntimeEnv->windowResInfo.prevSKey = windowSKey;
       } else {
-        assert(false);
-        //        pRuntimeEnv->windowResInfo.prevSKey =
-        //            windowSKey + ((win.ekey - windowSKey) / pQuery->slidingTime) * pQuery->slidingTime;
+        // todo handle the empty case
+        tsdbPos_t pos = tsdbDataBlockTell(pQueryHandle);
+        TSKEY     endKey = blockInfo.window.ekey;
+
+        SQueryRowCond cond = {.ts = pQuery->ekey, .rel = TSDB_TS_GREATER_EQUAL};
+        SArray *      pArray = tsdbRetrieveDataRow(pQueryHandle, NULL, &cond);
+
+        SColumnInfoEx_ *pInfo = taosArrayGet(pArray, 0);
+        
+        TSKEY startKey = *(TSKEY *)(pInfo->pData->data);
+
+        doGetAlignedIntervalQueryRangeImpl(pQuery, startKey, startKey, endKey, &skey1, &ekey1, &windowSKey,
+                                           &windowEKey);
+        pRuntimeEnv->windowResInfo.startTime = windowSKey;
+
+        pRuntimeEnv->windowResInfo.prevSKey =
+            windowSKey + ((endKey - windowSKey) / pQuery->slidingTime) * pQuery->slidingTime;
+
+        tsdbDataBlockSeek(pQueryHandle, pos);
+        tsdbNextDataBlock(pQueryHandle);
       }
     }
 
@@ -3726,7 +3743,6 @@ void vnodeScanAllData(SQueryRuntimeEnv *pRuntimeEnv) {
 
   /* store the start query position */
   void *pos = tsdbDataBlockTell(pRuntimeEnv->pQueryHandle);
-  TSKEY lastKey = -1;
 
   int64_t skey = pQuery->lastKey;
   int32_t status = pQuery->over;
@@ -3753,13 +3769,7 @@ void vnodeScanAllData(SQueryRuntimeEnv *pRuntimeEnv) {
      */
     int32_t ret = tsdbDataBlockSeek(pRuntimeEnv->pQueryHandle, pos);
 
-    //    TSKEY key = loadRequiredBlockIntoMem(pRuntimeEnv, &pRuntimeEnv->startPos);
-    //    assert((QUERY_IS_ASC_QUERY(pQuery) && key >= pQuery->skey) || (!QUERY_IS_ASC_QUERY(pQuery) && key <=
-    //    pQuery->skey));
-
     status = pQuery->over;
-    //    pQuery->ekey = pQuery->lastKey - step;
-    //    pQuery->lastKey = pQuery->skey;
     pRuntimeEnv->windowResInfo.curIndex = activeSlot;
 
     setQueryStatus(pQuery, QUERY_NOT_COMPLETED);

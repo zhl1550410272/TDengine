@@ -152,7 +152,6 @@ typedef struct STsdbQueryHandle {
   int32_t     commitPoint;
   int32_t     blockId;
   SCacheBlock cacheBlock;
-  bool        cacheBlockLoaded;
 } STsdbQueryHandle;
 
 typedef struct SDataBlockInfo {
@@ -236,6 +235,21 @@ int32_t tsdbDataBlockSeek(STsdbQueryHandle *pQueryHandle, tsdbPos_t pos);
  */
 tsdbPos_t tsdbDataBlockTell(STsdbQueryHandle* pQueryHandle);
 
+#define TSDB_TS_GREATER_EQUAL 1
+#define TSDB_TS_LESS_EQUAL    2
+
+typedef struct SQueryRowCond {
+  int32_t rel;
+  TSKEY ts;
+} SQueryRowCond;
+
+/**
+ *
+ * @param pQueryHandle
+ * @param pIdList
+ * @return
+ */
+SArray* tsdbRetrieveDataRow(STsdbQueryHandle *pQueryHandle, SArray *pIdList, SQueryRowCond* pCond);
 
 char *getDataBlocks_(SQueryRuntimeEnv *pRuntimeEnv, SArithmeticSupport *sas, int32_t col, int32_t size, SArray* pDataBlock);
 
