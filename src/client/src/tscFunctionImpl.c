@@ -387,42 +387,35 @@ static void function_finalizer(SQLFunctionCtx *pCtx) {
   doFinalizer(pCtx);
 }
 
+static bool usePreVal(SQLFunctionCtx *pCtx) {
+  return pCtx->preAggVals.isSet && pCtx->size == pCtx->preAggVals.size;
+}
+
 /*
  * count function does need the finalize, if data is missing, the default value, which is 0, is used
  * count function does not use the pCtx->interResBuf to keep the intermediate buffer
  */
 static void count_function(SQLFunctionCtx *pCtx) {
   int32_t numOfElem = 0;
-
-  if (IS_DATA_BLOCK_LOADED(pCtx->blockStatus)) {
-    /*
-     * In following cases, the data block is loaded:
-     * 1. A first/last file block for a query
-     * 2. Required to handle other queries, such as apercentile/twa/stddev etc.
-     * 3. A cache block
-     */
+  
+  /*
+   * 1. column data missing (schema modified) causes pCtx->hasNull == true. pCtx->preAggVals.isSet == true;
+   * 2. for general non-primary key columns, pCtx->hasNull may be true or false, pCtx->preAggVals.isSet == true;
+   * 3. for primary key column, pCtx->hasNull always be false, pCtx->preAggVals.isSet == false;
+   */
+  if (usePreVal(pCtx)) {
+    numOfElem = pCtx->size - pCtx->preAggVals.statis.numOfNull;
+  } else {
     if (pCtx->hasNull) {
       for (int32_t i = 0; i < pCtx->size; ++i) {
         char *val = GET_INPUT_CHAR_INDEX(pCtx, i);
         if (isNull(val, pCtx->inputType)) {
           continue;
         }
-
+    
         numOfElem += 1;
       }
     } else {
-      numOfElem = pCtx->size;
-    }
-  } else {
-    /*
-     * 1. column data missing (schema modified) causes pCtx->hasNull == true. pCtx->preAggVals.isSet == true;
-     * 2. for general non-primary key columns, pCtx->hasNull may be true or false, pCtx->preAggVals.isSet == true;
-     * 3. for primary key column, pCtx->hasNull always be false, pCtx->preAggVals.isSet == false;
-     */
-    if (pCtx->preAggVals.isSet) {
-      numOfElem = pCtx->size - pCtx->preAggVals.numOfNull;
-    } else {
-      assert(pCtx->hasNull == false);
       numOfElem = pCtx->size;
     }
   }
@@ -468,7 +461,7 @@ static void count_func_merge(SQLFunctionCtx *pCtx) {
  * @param filterCols
  * @return
  */
-int32_t count_load_data_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId, int32_t blockStatus) {
+int32_t count_load_data_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   if (colId == PRIMARYKEY_TIMESTAMP_COL_INDEX) {
     return BLK_DATA_NO_NEEDED;
   } else {
@@ -476,7 +469,7 @@ int32_t count_load_data_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32
   }
 }
 
-int32_t no_data_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId, int32_t blockStatus) {
+int32_t no_data_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   return BLK_DATA_NO_NEEDED;
 }
 
@@ -531,16 +524,16 @@ static void do_sum(SQLFunctionCtx *pCtx) {
   int32_t notNullElems = 0;
 
   // Only the pre-computing information loaded and actual data does not loaded
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus) && pCtx->preAggVals.isSet) {
-    notNullElems = pCtx->size - pCtx->preAggVals.numOfNull;
-    assert(pCtx->size >= pCtx->preAggVals.numOfNull);
+  if (pCtx->preAggVals.isSet && pCtx->preAggVals.size == pCtx->size) {
+    notNullElems = pCtx->size - pCtx->preAggVals.statis.numOfNull;
+    assert(pCtx->size >= pCtx->preAggVals.statis.numOfNull);
 
     if (pCtx->inputType >= TSDB_DATA_TYPE_TINYINT && pCtx->inputType <= TSDB_DATA_TYPE_BIGINT) {
       int64_t *retVal = (int64_t*) pCtx->aOutputBuf;
-      *retVal += pCtx->preAggVals.sum;
+      *retVal += pCtx->preAggVals.statis.sum;
     } else if (pCtx->inputType == TSDB_DATA_TYPE_DOUBLE || pCtx->inputType == TSDB_DATA_TYPE_FLOAT) {
       double *retVal = (double*) pCtx->aOutputBuf;
-      *retVal += GET_DOUBLE_VAL(&(pCtx->preAggVals.sum));
+      *retVal += GET_DOUBLE_VAL(&(pCtx->preAggVals.statis.sum));
     }
   } else {  // computing based on the true data block
     void *pData = GET_INPUT_CHAR(pCtx);
@@ -683,16 +676,16 @@ static void sum_func_second_merge(SQLFunctionCtx *pCtx) {
   }
 }
 
-static int32_t precal_req_load_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId, int32_t blockStatus) {
+static int32_t precal_req_load_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   return BLK_DATA_FILEDS_NEEDED;
 }
 
-static int32_t data_req_load_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId, int32_t blockStatus) {
+static int32_t data_req_load_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   return BLK_DATA_ALL_NEEDED;
 }
 
 // todo: if  column in current data block are null, opt for this case
-static int32_t first_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId, int32_t blockStatus) {
+static int32_t first_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   if (pCtx->order == TSQL_SO_DESC) {
     return BLK_DATA_NO_NEEDED;
   }
@@ -705,7 +698,7 @@ static int32_t first_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end,
   }
 }
 
-static int32_t last_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId, int32_t blockStatus) {
+static int32_t last_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   if (pCtx->order == TSQL_SO_ASC) {
     return BLK_DATA_NO_NEEDED;
   }
@@ -717,8 +710,7 @@ static int32_t last_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, 
   }
 }
 
-static int32_t first_dist_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId,
-                                        int32_t blockStatus) {
+static int32_t first_dist_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   if (pCtx->order == TSQL_SO_DESC) {
     return BLK_DATA_NO_NEEDED;
   }
@@ -734,8 +726,7 @@ static int32_t first_dist_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY
 //  }
 }
 
-static int32_t last_dist_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId,
-                                       int32_t blockStatus) {
+static int32_t last_dist_data_req_info(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId) {
   if (pCtx->order == TSQL_SO_ASC) {
     return BLK_DATA_NO_NEEDED;
   }
@@ -764,15 +755,15 @@ static void avg_function(SQLFunctionCtx *pCtx) {
   SAvgInfo *pAvgInfo = (SAvgInfo *)pResInfo->interResultBuf;
   double *  pVal = &pAvgInfo->sum;
 
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus) && pCtx->preAggVals.isSet) {
+  if (usePreVal(pCtx)) {
     // Pre-aggregation
-    notNullElems = pCtx->size - pCtx->preAggVals.numOfNull;
+    notNullElems = pCtx->size - pCtx->preAggVals.statis.numOfNull;
     assert(notNullElems >= 0);
 
     if (pCtx->inputType >= TSDB_DATA_TYPE_TINYINT && pCtx->inputType <= TSDB_DATA_TYPE_BIGINT) {
-      *pVal += pCtx->preAggVals.sum;
+      *pVal += pCtx->preAggVals.statis.sum;
     } else if (pCtx->inputType == TSDB_DATA_TYPE_DOUBLE || pCtx->inputType == TSDB_DATA_TYPE_FLOAT) {
-      *pVal += GET_DOUBLE_VAL(&(pCtx->preAggVals.sum));
+      *pVal += GET_DOUBLE_VAL(&(pCtx->preAggVals.statis.sum));
     }
   } else {
     void *pData = GET_INPUT_CHAR(pCtx);
@@ -927,20 +918,20 @@ static void avg_finalizer(SQLFunctionCtx *pCtx) {
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 static void minMax_function(SQLFunctionCtx *pCtx, char *pOutput, int32_t isMin, int32_t *notNullElems) {
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus) && pCtx->preAggVals.isSet) {
-    // data in current data block are qualified to the query
-    *notNullElems = pCtx->size - pCtx->preAggVals.numOfNull;
+  // data in current data block are qualified to the query
+  if (usePreVal(pCtx)) {
+    *notNullElems = pCtx->size - pCtx->preAggVals.statis.numOfNull;
     assert(*notNullElems >= 0);
 
     void *  tval = NULL;
     int16_t index = 0;
 
     if (isMin) {
-      tval = &pCtx->preAggVals.min;
-      index = pCtx->preAggVals.minIndex;
+      tval = &pCtx->preAggVals.statis.min;
+      index = pCtx->preAggVals.statis.minIndex;
     } else {
-      tval = &pCtx->preAggVals.max;
-      index = pCtx->preAggVals.maxIndex;
+      tval = &pCtx->preAggVals.statis.max;
+      index = pCtx->preAggVals.statis.maxIndex;
     }
   
     /**
@@ -1487,7 +1478,7 @@ static bool first_last_function_setup(SQLFunctionCtx *pCtx) {
 
 // todo opt for null block
 static void first_function(SQLFunctionCtx *pCtx) {
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus) || pCtx->order == TSQL_SO_DESC) {
+  if (pCtx->order == TSQL_SO_DESC) {
     return;
   }
 
@@ -1565,7 +1556,7 @@ static void first_dist_function(SQLFunctionCtx *pCtx) {
    * 1. data block that are not loaded
    * 2. scan data files in desc order
    */
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus) || pCtx->order == TSQL_SO_DESC) {
+  if (pCtx->order == TSQL_SO_DESC) {
     return;
   }
 
@@ -1658,7 +1649,7 @@ static void first_dist_func_second_merge(SQLFunctionCtx *pCtx) {
  *    least one data in this block that is not null.(TODO opt for this case)
  */
 static void last_function(SQLFunctionCtx *pCtx) {
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus) || pCtx->order == TSQL_SO_ASC) {
+  if (pCtx->order == TSQL_SO_ASC) {
     return;
   }
 
@@ -1734,7 +1725,7 @@ static void last_dist_function(SQLFunctionCtx *pCtx) {
    * 1. for scan data in asc order, no need to check data
    * 2. for data blocks that are not loaded, no need to check data
    */
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus) || pCtx->order == TSQL_SO_ASC) {
+  if (pCtx->order == TSQL_SO_ASC) {
     return;
   }
 
@@ -3381,44 +3372,40 @@ static void spread_function(SQLFunctionCtx *pCtx) {
   int32_t numOfElems = pCtx->size;
 
   // column missing cause the hasNull to be true
-  if (!IS_DATA_BLOCK_LOADED(pCtx->blockStatus)) {
-    if (pCtx->preAggVals.isSet) {
-      numOfElems = pCtx->size - pCtx->preAggVals.numOfNull;
+  if (usePreVal(pCtx)) {
+    numOfElems = pCtx->size - pCtx->preAggVals.statis.numOfNull;
 
-      // all data are null in current data block, ignore current data block
-      if (numOfElems == 0) {
-        goto _spread_over;
-      }
-
-      if ((pCtx->inputType >= TSDB_DATA_TYPE_TINYINT && pCtx->inputType <= TSDB_DATA_TYPE_BIGINT) ||
-          (pCtx->inputType == TSDB_DATA_TYPE_TIMESTAMP)) {
-        if (pInfo->min > pCtx->preAggVals.min) {
-          pInfo->min = pCtx->preAggVals.min;
-        }
-
-        if (pInfo->max < pCtx->preAggVals.max) {
-          pInfo->max = pCtx->preAggVals.max;
-        }
-      } else if (pCtx->inputType == TSDB_DATA_TYPE_DOUBLE || pCtx->inputType == TSDB_DATA_TYPE_FLOAT) {
-        if (pInfo->min > GET_DOUBLE_VAL(&(pCtx->preAggVals.min))) {
-          pInfo->min = GET_DOUBLE_VAL(&(pCtx->preAggVals.min));
-        }
-
-        if (pInfo->max < GET_DOUBLE_VAL(&(pCtx->preAggVals.max))) {
-          pInfo->max = GET_DOUBLE_VAL(&(pCtx->preAggVals.max));
-        }
-      }
-    } else {
-      if (pInfo->min > pCtx->param[1].dKey) {
-        pInfo->min = pCtx->param[1].dKey;
-      }
-
-      if (pInfo->max < pCtx->param[2].dKey) {
-        pInfo->max = pCtx->param[2].dKey;
-      }
+    // all data are null in current data block, ignore current data block
+    if (numOfElems == 0) {
+      goto _spread_over;
     }
 
-    goto _spread_over;
+    if ((pCtx->inputType >= TSDB_DATA_TYPE_TINYINT && pCtx->inputType <= TSDB_DATA_TYPE_BIGINT) ||
+        (pCtx->inputType == TSDB_DATA_TYPE_TIMESTAMP)) {
+      if (pInfo->min > pCtx->preAggVals.statis.min) {
+        pInfo->min = pCtx->preAggVals.statis.min;
+      }
+
+      if (pInfo->max < pCtx->preAggVals.statis.max) {
+        pInfo->max = pCtx->preAggVals.statis.max;
+      }
+    } else if (pCtx->inputType == TSDB_DATA_TYPE_DOUBLE || pCtx->inputType == TSDB_DATA_TYPE_FLOAT) {
+      if (pInfo->min > GET_DOUBLE_VAL(&(pCtx->preAggVals.statis.min))) {
+        pInfo->min = GET_DOUBLE_VAL(&(pCtx->preAggVals.statis.min));
+      }
+
+      if (pInfo->max < GET_DOUBLE_VAL(&(pCtx->preAggVals.statis.max))) {
+        pInfo->max = GET_DOUBLE_VAL(&(pCtx->preAggVals.statis.max));
+      }
+    }
+  } else {
+    if (pInfo->min > pCtx->param[1].dKey) {
+      pInfo->min = pCtx->param[1].dKey;
+    }
+
+    if (pInfo->max < pCtx->param[2].dKey) {
+      pInfo->max = pCtx->param[2].dKey;
+    }
   }
 
   void *pData = GET_INPUT_CHAR(pCtx);
@@ -4043,8 +4030,6 @@ static void twa_function(SQLFunctionCtx *pCtx) {
   void * data = GET_INPUT_CHAR(pCtx);
   TSKEY *primaryKey = pCtx->ptsList;
 
-  assert(IS_DATA_BLOCK_LOADED(pCtx->blockStatus));
-
   int32_t notNullElems = 0;
 
   SResultInfo *pResInfo = GET_RES_INFO(pCtx);
@@ -4439,8 +4424,6 @@ static bool rate_function_setup(SQLFunctionCtx *pCtx) {
 
 static void rate_function(SQLFunctionCtx *pCtx) {
 
-  assert(IS_DATA_BLOCK_LOADED(pCtx->blockStatus));
-
   int32_t      notNullElems = 0;
   SResultInfo *pResInfo     = GET_RES_INFO(pCtx);
   SRateInfo   *pRateInfo    = (SRateInfo *)pResInfo->interResultBuf;
@@ -4645,8 +4628,6 @@ static void rate_finalizer(SQLFunctionCtx *pCtx) {
 
 
 static void irate_function(SQLFunctionCtx *pCtx) {
-
-  assert(IS_DATA_BLOCK_LOADED(pCtx->blockStatus));
 
   int32_t       notNullElems = 0;
   SResultInfo  *pResInfo     = GET_RES_INFO(pCtx);

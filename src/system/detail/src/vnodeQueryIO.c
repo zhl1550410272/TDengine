@@ -3889,7 +3889,7 @@ int32_t LoadDatablockOnDemand(SCompBlock *pBlock, SField **pFields, uint8_t *blk
       for (int32_t i = 0; i < pQuery->numOfOutputCols; ++i) {
         int32_t functID = pQuery->pSelectExpr[i].pBase.functionId;
         req |= aAggs[functID].dataReqFunc(&pRuntimeEnv->pCtx[i], pBlock->keyFirst, pBlock->keyLast,
-                                          pQuery->pSelectExpr[i].pBase.colInfo.colId, *blkStatus);
+                                          pQuery->pSelectExpr[i].pBase.colInfo.colId);
       }
 
       if (pRuntimeEnv->pTSBuf > 0 || isIntervalQuery(pQuery)) {
@@ -4311,8 +4311,22 @@ int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SDataSta
 
   // load the file block info
   loadDataBlockFieldsInfo_(pQueryHandle, &pQueryHandle->pBlock[slot], &pQueryHandle->pFields[slot]);
-
-  *pBlockStatis = pQueryHandle->pFields[slot];
+  (*pBlockStatis) = calloc(blockInfo.numOfCols, sizeof(SDataStatis));
+  
+  for(int32_t i = 0; i < blockInfo.numOfCols; ++i) {
+    SField* pField = &pQueryHandle->pFields[slot][i];
+    
+    (*pBlockStatis)[i].colId = pField->colId;
+    (*pBlockStatis)[i].numOfNull = pField->numOfNullPoints;
+    (*pBlockStatis)[i].sum = pField->sum;
+    
+    (*pBlockStatis)[i].min = pField->min;
+    (*pBlockStatis)[i].max = pField->max;
+  
+    (*pBlockStatis)[i].minIndex = pField->minIndex;
+    (*pBlockStatis)[i].maxIndex = pField->maxIndex;
+  }
+  
   return TSDB_CODE_SUCCESS;
 }
 

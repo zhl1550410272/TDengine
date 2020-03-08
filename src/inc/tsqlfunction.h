@@ -127,14 +127,20 @@ typedef struct SArithmeticSupport {
   char *            data[TSDB_MAX_COLUMNS];
 } SArithmeticSupport;
 
-typedef struct SQLPreAggVal {
-  bool    isSet;
-  int32_t numOfNull;
+typedef struct SDataStatis {
+  int16_t colId;
   int64_t sum;
   int64_t max;
   int64_t min;
   int16_t maxIndex;
   int16_t minIndex;
+  int16_t numOfNull;
+} SDataStatis;
+
+typedef struct SQLPreAggVal {
+  bool    isSet;
+  int32_t size;
+  SDataStatis statis;
 } SQLPreAggVal;
 
 typedef struct SInterpInfoDetail {
@@ -181,7 +187,6 @@ typedef struct SQLFunctionCtx {
   int16_t  outputBytes;  // size of results, determined by function and input column data type
   bool     hasNull;      // null value exist in current block
   int16_t  functionId;   // function id
-  int32_t  blockStatus;  // Indicate if data is loaded, it is first/last/internal block. Only for file blocks
   void *   aInputElemBuf;
   char *   aOutputBuf;            // final result output buffer, point to sdata->data
   uint8_t  currentStage;          // record current running step, default: 0
@@ -222,7 +227,7 @@ typedef struct SQLAggFuncElem {
 
   void (*distSecondaryMergeFunc)(SQLFunctionCtx *pCtx);
 
-  int32_t (*dataReqFunc)(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId, int32_t blockStatus);
+  int32_t (*dataReqFunc)(SQLFunctionCtx *pCtx, TSKEY start, TSKEY end, int32_t colId);
 } SQLAggFuncElem;
 
 typedef struct SPatternCompareInfo {

@@ -165,16 +165,6 @@ typedef struct SDataBlockInfo {
   int32_t sid;
 } SDataBlockInfo;
 
-typedef struct SDataStatis {
-  int16_t colId;
-  int64_t sum;
-  int64_t max;
-  int64_t min;
-  int16_t maxIndex;
-  int16_t minIndex;
-  int16_t numOfNullPoints;
-} SDataStatis;
-
 typedef void* tsdbPos_t;
 
 /**
