@@ -142,8 +142,8 @@ typedef struct STsdbQueryHandle {
   SArray *           pTableList;  // table object list
   bool               locateStart;
 
-  int32_t realNumOfRows;
-  bool        needLoadData;// load data after seek.
+  int32_t     realNumOfRows;
+  bool        loadDataAfterSeek;// load data after seek.
   
   int32_t     currentSlot;
   int32_t     numOfCacheBlocks;
@@ -152,6 +152,7 @@ typedef struct STsdbQueryHandle {
   int32_t     commitPoint;
   int32_t     blockId;
   SCacheBlock cacheBlock;
+  bool        cacheBlockLoaded;
 } STsdbQueryHandle;
 
 typedef struct SDataBlockInfo {

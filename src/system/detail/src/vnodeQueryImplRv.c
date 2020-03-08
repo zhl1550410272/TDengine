@@ -3068,17 +3068,6 @@ void UNUSED_FUNC displayInterResult(SData **pdata, SQuery *pQuery, int32_t numOf
   }
 }
 
-// static tFilePage *getMeterDataPage(SQueryDiskbasedResultBuf *pResultBuf, SMeterQueryInfo *pMeterQueryInfo,
-//                                   int32_t index) {
-//  SIDList pList = getDataBufPagesIdList(pResultBuf, pMeterQueryInfo->sid);
-//  return getResultBufferPageById(pResultBuf, pList.pData[index]);
-//}
-
-// typedef struct Position {
-//  int32_t pageIdx;
-//  int32_t rowIdx;
-//} Position;
-
 typedef struct SCompSupporter {
   SMeterDataInfo **      pMeterDataInfo;
   int32_t *              position;
