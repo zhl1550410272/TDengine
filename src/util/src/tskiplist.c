@@ -524,6 +524,14 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType) {
   return sa;
 }
 
+size_t tSkipListGetSize(SSkipList* pSkipList) {
+  if (pSkipList == NULL) {
+    return 0;
+  }
+  
+  return pSkipList->size;
+}
+
 // static int32_t tSkipListEndParQuery(SSkipList *pSkipList, SSkipListNode *pStartNode, SSkipListKey *pEndKey,
 //                                    int32_t cond, SSkipListNode ***pRes) {
 //  pthread_rwlock_rdlock(&pSkipList->lock);
@@ -667,48 +675,65 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType) {
 //
 //  return num;
 }
-//
- int32_t tSkipListIteratorReset(SSkipList *pSkipList, SSkipListIterator *iter) {
+
+SSkipListIterator* tSkipListCreateIter(SSkipList *pSkipList) {
   if (pSkipList == NULL) {
-    return -1;
+    return NULL;
   }
-//
-//  iter->pSkipList = pSkipList;
-//  if (pSkipList->lock) {
-//    pthread_rwlock_rdlock(&pSkipList->lock);
-//  }
-//  iter->cur = NULL;  // pSkipList->pHead.pForward[0];
-//  iter->num = pSkipList->size;
-//
-//  if (pSkipList->lock) {
-//    pthread_rwlock_unlock(&pSkipList->lock);
-//  }
-//
-  return 0;
+
+  SSkipListIterator* iter = calloc(1, sizeof(SSkipListIterator));
+  
+  iter->pSkipList = pSkipList;
+  if (pSkipList->lock) {
+    pthread_rwlock_rdlock(pSkipList->lock);
+  }
+  
+  iter->cur = NULL;
+  iter->num = pSkipList->size;
+
+  if (pSkipList->lock) {
+    pthread_rwlock_unlock(pSkipList->lock);
+  }
+
+  return iter;
 }
-//
- bool tSkipListIteratorNext(SSkipListIterator *iter) {
+
+ bool tSkipListIterNext(SSkipListIterator *iter) {
   if (iter->num == 0 || iter->pSkipList == NULL) {
     return false;
   }
 
-//  SSkipList *pSkipList = iter->pSkipList;
-//
-//  pthread_rwlock_rdlock(&pSkipList->lock);
-//  if (iter->cur == NULL) {
-//    iter->cur = pSkipList->pHead.pForward[0];
-//  } else {
-//    iter->cur = iter->cur->pForward[0];
-//  }
-//
-//  pthread_rwlock_unlock(&pSkipList->lock);
-//
+  SSkipList *pSkipList = iter->pSkipList;
+
+  if (pSkipList->lock) {
+    pthread_rwlock_rdlock(pSkipList->lock);
+  }
+  
+  if (iter->cur == NULL) {
+    iter->cur = SL_GET_FORWARD_POINTER(pSkipList->pHead, 0);
+  } else {
+    iter->cur = SL_GET_FORWARD_POINTER(iter->cur, 0);
+  }
+
+  if (pSkipList->lock) {
+    pthread_rwlock_unlock(pSkipList->lock);
+  }
+
   return iter->cur != NULL;
 }
 
- SSkipListNode *tSkipListIteratorGet(SSkipListIterator *iter) { return iter->cur; }
-//
-// int32_t tSkipListRangeQuery(SSkipList *pSkipList, tSKipListQueryCond *pCond, SSkipListNode ***pRes) {
+SSkipListNode *tSkipListIterGet(SSkipListIterator *iter) { return iter->cur; }
+
+void* tSkipListDestroyIter(SSkipListIterator* iter) {
+  if (iter == NULL) {
+    return NULL;
+  }
+  
+  tfree(iter);
+  return NULL;
+}
+
+ // int32_t tSkipListRangeQuery(SSkipList *pSkipList, tSKipListQueryCond *pCond, SSkipListNode ***pRes) {
 //  pSkipList->state.queryCount++;
 //  SSkipListNode *pStart = tSkipListParQuery(pSkipList, &pCond->lowerBnd, pCond->lowerBndRelOptr);
 //  if (pStart == 0) {

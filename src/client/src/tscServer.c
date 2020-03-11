@@ -1775,7 +1775,7 @@ int tscBuildQueryMsg(SSqlObj *pSql, SSqlInfo *pInfo) {
   }
 
   pQueryMsg->intervalTime = htobe64(pQueryInfo->intervalTime);
-  pQueryMsg->intervalTimeUnit = pQueryInfo->intervalTimeUnit;
+  pQueryMsg->slidingTimeUnit = pQueryInfo->slidingTimeUnit;
   pQueryMsg->slidingTime = htobe64(pQueryInfo->slidingTime);
 
   if (pQueryInfo->intervalTime < 0) {
@@ -3780,10 +3780,10 @@ int tscGetMetricMeta(SSqlObj *pSql, int32_t clauseIndex) {
            pSql, pNew, pNewQueryInfo->numOfTables, pNewQueryInfo->slimit.limit, pNewQueryInfo->slimit.offset,
            pNewQueryInfo->order.order, pTagCond->tbnameCond.cond)
 
-      if (pSql->fp != NULL && pSql->pStream == NULL) {
-    pCmd->pDataBlocks = tscDestroyBlockArrayList(pCmd->pDataBlocks);
-    tscFreeSubqueryInfo(pCmd);
-  }
+//  if (pSql->fp != NULL && pSql->pStream == NULL) {
+//    pCmd->pDataBlocks = tscDestroyBlockArrayList(pCmd->pDataBlocks);
+//    tscFreeSubqueryInfo(pCmd);
+//  }
 
   tscTrace("%p allocate new pSqlObj:%p to get metricMeta", pSql, pNew);
   //  if (pSql->fp == NULL) {

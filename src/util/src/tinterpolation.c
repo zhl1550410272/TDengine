@@ -16,19 +16,20 @@
 #include "os.h"
 #include "taosmsg.h"
 #include "textbuffer.h"
-#include "tinterpolation.h"
 #include "tsqlfunction.h"
 #include "ttypes.h"
+#include "tinterpolation.h"
 
 #define INTERPOL_IS_ASC_INTERPOL(interp) ((interp)->order == TSQL_SO_ASC)
 
-int64_t taosGetIntervalStartTimestamp(int64_t startTime, int64_t timeRange, char intervalTimeUnit, int16_t precision) {
-  if (timeRange == 0) {
+int64_t taosGetIntervalStartTimestamp(int64_t startTime, TSKEY slidingTime, char slidingTimeUnit, int16_t precision) {
+  // not a interval query
+  if (slidingTime == 0) {
     return startTime;
   }
 
-  if (intervalTimeUnit == 'a' || intervalTimeUnit == 'm' || intervalTimeUnit == 's' || intervalTimeUnit == 'h') {
-    return (startTime / timeRange) * timeRange;
+  if (slidingTimeUnit == 'a' || slidingTimeUnit == 'm' || slidingTimeUnit == 's' || slidingTimeUnit == 'h') {
+    return (startTime / slidingTime) * slidingTime;
   } else {
     /*
      * here we revised the start time of day according to the local time zone,
@@ -46,10 +47,10 @@ int64_t taosGetIntervalStartTimestamp(int64_t startTime, int64_t timeRange, char
 
     int64_t t = (precision == TSDB_TIME_PRECISION_MILLI) ? MILLISECOND_PER_SECOND : MILLISECOND_PER_SECOND * 1000L;
 
-    int64_t revStartime = (startTime / timeRange) * timeRange + timezone * t;
-    int64_t revEndtime = revStartime + timeRange - 1;
+    int64_t revStartime = (startTime / slidingTime) * slidingTime + timezone * t;
+    int64_t revEndtime = revStartime + slidingTime - 1;
     if (revEndtime < startTime) {
-      revStartime += timeRange;
+      revStartime += slidingTime;
     }
 
     return revStartime;
@@ -95,11 +96,11 @@ void taosInterpoSetStartInfo(SInterpolationInfo* pInterpoInfo, int32_t numOfRawD
   pInterpoInfo->numOfRawDataInRows = numOfRawDataInRows;
 }
 
-TSKEY taosGetRevisedEndKey(TSKEY ekey, int32_t order, int32_t timeInterval, int8_t intervalTimeUnit, int8_t precision) {
+TSKEY taosGetRevisedEndKey(TSKEY ekey, int32_t order, int32_t timeInterval, int8_t slidingTimeUnit, int8_t precision) {
   if (order == TSQL_SO_ASC) {
     return ekey;
   } else {
-    return taosGetIntervalStartTimestamp(ekey, timeInterval, intervalTimeUnit, precision);
+    return taosGetIntervalStartTimestamp(ekey, timeInterval, slidingTimeUnit, precision);
   }
 }
 
@@ -299,12 +300,12 @@ static void initBeforeAfterDataBuf(SColumnModel* pModel, char** nextValues) {
   if (*nextValues != NULL) {
     return;
   }
-  
+
   *nextValues = calloc(1, pModel->rowSize);
   for (int i = 1; i < pModel->numOfCols; i++) {
     int16_t  offset = getColumnModelOffset(pModel, i);
     SSchema* pSchema = getColumnModelSchema(pModel, i);
-    
+
     setNull(*nextValues + offset, pSchema->type, pSchema->bytes);
   }
 }
@@ -344,7 +345,7 @@ int32_t taosDoInterpoResult(SInterpolationInfo* pInterpoInfo, int16_t interpoTyp
           (pInterpoInfo->startTimestamp > currentTimestamp && !INTERPOL_IS_ASC_INTERPOL(pInterpoInfo))) {
         /* set the next value for interpolation */
         initBeforeAfterDataBuf(pModel, nextValues);
-        
+
         int32_t offset = pInterpoInfo->rowIdx;
         for (int32_t tlen = 0, i = 0; i < pModel->numOfCols - numOfTags; ++i) {
           SSchema* pSchema = getColumnModelSchema(pModel, i);
@@ -372,9 +373,9 @@ int32_t taosDoInterpoResult(SInterpolationInfo* pInterpoInfo, int16_t interpoTyp
         }
       } else {
         assert(pInterpoInfo->startTimestamp == currentTimestamp);
-        
+
         initBeforeAfterDataBuf(pModel, prevValues);
-        
+
         // assign rows to dst buffer
         int32_t i = 0;
         for (int32_t tlen = 0; i < pModel->numOfCols - numOfTags; ++i) {
@@ -383,9 +384,8 @@ int32_t taosDoInterpoResult(SInterpolationInfo* pInterpoInfo, int16_t interpoTyp
 
           char* val1 = getPos(data[i]->data, pSchema->bytes, num);
           char* src = srcData[i] + pInterpoInfo->rowIdx * pSchema->bytes;
-          
-          if (i == 0 ||
-              (functionIDs[i] != TSDB_FUNC_COUNT && !isNull(src, pSchema->type)) ||
+
+          if (i == 0 || (functionIDs[i] != TSDB_FUNC_COUNT && !isNull(src, pSchema->type)) ||
               (functionIDs[i] == TSDB_FUNC_COUNT && *(int64_t*)(src) != 0)) {
             assignVal(val1, src, pSchema->bytes, pSchema->type);
             memcpy(*prevValues + tlen, src, pSchema->bytes);

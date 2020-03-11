@@ -168,10 +168,14 @@ SBlockInfo getBlockBasicInfo(SQueryRuntimeEnv *pRuntimeEnv, void* pBlock, int32_
 SCacheBlock* getCacheDataBlock(SMeterObj* pMeterObj, SQueryRuntimeEnv* pRuntimeEnv, int32_t slot);
 
 void stableApplyFunctionsOnBlock(STableQuerySupportObj* pSupporter, SMeterDataInfo* pMeterDataInfo,
-                               SBlockInfo* pBlockInfo, SField* pFields, __block_search_fn_t searchFn);
+                               SDataBlockInfo* pBlockInfo, SDataStatis* pStatis, __block_search_fn_t searchFn);
 
-int32_t vnodeFilterQualifiedMeters(SQInfo* pQInfo, int32_t vid, tSidSet* pSidSet, SMeterDataInfo* pMeterDataInfo,
-                                   int32_t* numOfMeters, SMeterDataInfo*** pReqMeterDataInfo);
+void stableApplyFunctionsOnBlock_(STableQuerySupportObj *pSupporter, SMeterDataInfo *pMeterDataInfo,
+                                  SDataBlockInfo *pDataBlockInfo, SDataStatis *pStatis, SArray* pDataBlock,
+                                  __block_search_fn_t searchFn);
+
+int32_t vnodeFilterQualifiedMeters(SQInfo *pQInfo, int32_t vid, tSidSet *pSidSet, SMeterDataInfo *pMeterDataInfo, SArray *qualTableList);
+
 int32_t vnodeGetVnodeHeaderFileIndex(int32_t* fid, SQueryRuntimeEnv* pRuntimeEnv, int32_t order);
 
 int32_t createDataBlocksInfoEx(SMeterDataInfo** pMeterDataInfo, int32_t numOfMeters,
@@ -183,7 +187,7 @@ void    setExecutionContext(STableQuerySupportObj* pSupporter, SMeterQueryInfo* 
                             int32_t groupIdx, TSKEY nextKey);
 int32_t setAdditionalInfo(STableQuerySupportObj *pSupporter, int32_t meterIdx, SMeterQueryInfo *pMeterQueryInfo);
 void    doGetAlignedIntervalQueryRangeImpl(SQuery* pQuery, int64_t pKey, int64_t keyFirst, int64_t keyLast,
-                                           int64_t* actualSkey, int64_t* actualEkey, int64_t* skey, int64_t* ekey);
+                                           int64_t* actualSkey, int64_t* actualEkey, STimeWindow* win);
 
 int64_t getQueryStartPositionInCache(SQueryRuntimeEnv* pRuntimeEnv, int32_t* slot, int32_t* pos, bool ignoreQueryRange);
 
@@ -281,6 +285,8 @@ int32_t curTimeWindow(SWindowResInfo *pWindowResInfo);
 bool isWindowResClosed(SWindowResInfo *pWindowResInfo, int32_t slot);
 
 void createQueryResultInfo(SQuery *pQuery, SWindowResult *pResultRow, bool isSTableQuery, SPosInfo *posInfo);
+
+SArray* loadDataBlockOnDemand(SQueryRuntimeEnv* pRuntimeEnv, SDataBlockInfo* pBlockInfo, SDataStatis** pStatis);
 
 #ifdef __cplusplus
 }

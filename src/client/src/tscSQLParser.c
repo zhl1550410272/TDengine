@@ -606,7 +606,7 @@ int32_t parseIntervalClause(SQueryInfo* pQueryInfo, SQuerySQL* pQuerySql) {
   }
 
   /* parser has filter the illegal type, no need to check here */
-  pQueryInfo->intervalTimeUnit = pQuerySql->interval.z[pQuerySql->interval.n - 1];
+  pQueryInfo->slidingTimeUnit = pQuerySql->interval.z[pQuerySql->interval.n - 1];
 
   // interval cannot be less than 10 milliseconds
   if (pQueryInfo->intervalTime < tsMinIntervalTime) {

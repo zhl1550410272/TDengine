@@ -46,7 +46,7 @@ char *doGetDataBlocks(SQuery *pQuery, SData **data, int32_t colIdx);
 void  doCloseQueryFiles(SQueryFilesInfo *pVnodeFileInfo);
 
 void    initQueryFileInfoFD(SQueryFilesInfo *pVnodeFilesInfo);
-void    vnodeInitDataBlockLoadInfo(SDataBlockLoadInfo *pBlockLoadInfo);
+void    vnodeInitDataBlockLoadInfo(SDataBlockLoadInfo_ *pBlockLoadInfo);
 int64_t getOldestKey(int32_t numOfFiles, int64_t fileId, SVnodeCfg *pCfg);
 void    vnodeFreeFieldsEx(SQueryRuntimeEnv *pRuntimeEnv);
 
@@ -85,7 +85,7 @@ void vnodeInitCompBlockLoadInfo(SLoadCompBlockInfo *pCompBlockLoadInfo);
 
 void getBasicCacheInfoSnapshot(SQuery *pQuery, SCacheInfo *pCacheInfo, int32_t vid);
 
-TSKEY getQueryPositionForCacheInvalid(SQueryRuntimeEnv *pRuntimeEnv, __block_search_fn_t searchFn);
+//TSKEY getQueryPositionForCacheInvalid(SQueryRuntimeEnv *pRuntimeEnv);
 
 TSKEY getTimestampInDiskBlock(SQueryRuntimeEnv *pRuntimeEnv, int32_t index);
 TSKEY getTimestampInCacheBlock(SQueryRuntimeEnv *pRuntimeEnv, SCacheBlock *pBlock, int32_t index);
@@ -112,20 +112,33 @@ typedef struct SQueryHandlePos {
   int32_t fileIndex;
 } SQueryHandlePos;
 
+typedef struct STableQueryRec {
+  TSKEY       lastKey;
+  SMeterObj * pMeterObj;
+  int64_t     offsetInHeaderFile;
+  int32_t     numOfBlocks;
+  int32_t     start;
+  SCompBlock *pBlock;
+} STableQueryRec;
+
+typedef struct SMeterDataBlockInfoEx_ {
+  SCompBlockFields pBlock;
+  STableQueryRec * pMeterDataInfo;
+  int32_t          blockIndex;
+  int32_t          groupIdx; /* number of group is less than the total number of meters */
+} SMeterDataBlockInfoEx_;
+
 typedef struct STsdbQueryHandle {
   SQueryHandlePos cur;   // current position
   SQueryHandlePos start; /* the start position, used for secondary/third iteration */
-  SQueryHandlePos end;   /* the last access position in query, served as the start pos of reversed order query */
+  int32_t         unzipBufSize;
 
-  uint8_t blockStatus;  // Indicate if data block is loaded, the block is first/last/internal block
-  int32_t unzipBufSize;
-
-  SData *tsBuf;   //primary time stamp columns
+  SData *tsBuf;  // primary time stamp columns
   char * unzipBuffer;
   char * secondaryUnzipBuffer;
 
   SDataBlockLoadInfo_ dataBlockLoadInfo; /* record current block load information */
-  SLoadCompBlockInfo compBlockLoadInfo; /* record current compblock information in SQuery */
+  SLoadCompBlockInfo  compBlockLoadInfo; /* record current compblock information in SQuery */
 
   SQueryFilesInfo_rv vnodeFileInfo;
   int16_t            numOfRowsPerPage;
@@ -138,13 +151,13 @@ typedef struct STsdbQueryHandle {
   SCompBlock *       pBlock;
   int32_t            numOfBlocks;
   SField **          pFields;
-  SArray *           pColumns;  // column list, SColumnInfoEx_ array list
+  SArray *           pColumns;    // column list, SColumnInfoEx_ array list
   SArray *           pTableList;  // table object list
   bool               locateStart;
 
-  int32_t     realNumOfRows;
-  bool        loadDataAfterSeek;// load data after seek.
-  
+  int32_t realNumOfRows;
+  bool    loadDataAfterSeek;  // load data after seek.
+
   int32_t     currentSlot;
   int32_t     numOfCacheBlocks;
   int32_t     firstSlot;
@@ -152,6 +165,13 @@ typedef struct STsdbQueryHandle {
   int32_t     commitPoint;
   int32_t     blockId;
   SCacheBlock cacheBlock;
+
+  SMeterDataBlockInfoEx_ *pDataBlockInfoEx;
+  STableQueryRec *        pTableQueryInfo;
+  int32_t                 tableIndex;
+  bool isFirstSlot;
+  
+  void* qinfo;  //query info handle, for debug purpose
 } STsdbQueryHandle;
 
 typedef struct SDataBlockInfo {
@@ -164,7 +184,7 @@ typedef struct SDataBlockInfo {
   int32_t sid;
 } SDataBlockInfo;
 
-typedef void* tsdbPos_t;
+typedef void *tsdbPos_t;
 
 /**
  * Get the data block iterator, starting from position according to the query condition
@@ -209,7 +229,7 @@ int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SDataSta
  * @param pQueryHandle
  * @return
  */
-SArray* tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList);
+SArray *tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList);
 
 /**
  *  Reset to the start(end) position of current query, from which the iterator starts.
@@ -219,7 +239,7 @@ SArray* tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList);
  * @param order ascending order or descending order
  * @return
  */
-int32_t tsdbResetQuery(STsdbQueryHandle *pQueryHandle, void* position, int16_t order);
+int32_t tsdbResetQuery(STsdbQueryHandle *pQueryHandle, void *position, int16_t order);
 
 /**
  * return the access position of current query handle
@@ -233,14 +253,14 @@ int32_t tsdbDataBlockSeek(STsdbQueryHandle *pQueryHandle, tsdbPos_t pos);
  * @param pQueryHandle
  * @return
  */
-tsdbPos_t tsdbDataBlockTell(STsdbQueryHandle* pQueryHandle);
+tsdbPos_t tsdbDataBlockTell(STsdbQueryHandle *pQueryHandle);
 
 #define TSDB_TS_GREATER_EQUAL 1
-#define TSDB_TS_LESS_EQUAL    2
+#define TSDB_TS_LESS_EQUAL 2
 
 typedef struct SQueryRowCond {
   int32_t rel;
-  TSKEY ts;
+  TSKEY   ts;
 } SQueryRowCond;
 
 /**
@@ -249,8 +269,22 @@ typedef struct SQueryRowCond {
  * @param pIdList
  * @return
  */
-SArray* tsdbRetrieveDataRow(STsdbQueryHandle *pQueryHandle, SArray *pIdList, SQueryRowCond* pCond);
+SArray *tsdbRetrieveDataRow(STsdbQueryHandle *pQueryHandle, SArray *pIdList, SQueryRowCond *pCond);
 
-char *getDataBlocks_(SQueryRuntimeEnv *pRuntimeEnv, SArithmeticSupport *sas, int32_t col, int32_t size, SArray* pDataBlock);
+/**
+ *  Get iterator for super tables, of which tags values satisfy the tag filter info
+ *
+ *  NOTE: the tagFilterStr is an bin-expression for tag filter, such as ((tag_col = 5) and (tag_col2 > 7))
+ *  The filter string is sent from client directly.
+ *  The build of the tags filter expression from string is done in the iterator generating function.
+ *
+ * @param pCond         query condition
+ * @param pTagFilterStr tag filter info
+ * @return
+ */
+STsdbQueryHandle *tsdbQueryFromTagConds(STsdbQueryCond *pCond, int16_t stableId, const char *pTagFilterStr);
+
+char *getDataBlocks_(SQueryRuntimeEnv *pRuntimeEnv, SArithmeticSupport *sas, int32_t col, int32_t size,
+                     SArray *pDataBlock);
 
 #endif  // TDENGINE_VNODEQUERYIO_H

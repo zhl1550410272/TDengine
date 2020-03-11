@@ -1513,7 +1513,7 @@ bool needSupplementaryScan(SQuery *pQuery) {
 void doGetAlignedIntervalQueryRangeImpl(SQuery *pQuery, int64_t pKey, int64_t keyFirst, int64_t keyLast,
                                         int64_t *actualSkey, int64_t *actualEkey, int64_t *skey, int64_t *ekey) {
   assert(pKey >= keyFirst && pKey <= keyLast);
-  *skey = taosGetIntervalStartTimestamp(pKey, pQuery->intervalTime, pQuery->intervalTimeUnit, pQuery->precision);
+  *skey = taosGetIntervalStartTimestamp(pKey, pQuery->intervalTime, pQuery->slidingTimeUnit, pQuery->precision);
 
   if (keyFirst > (INT64_MAX - pQuery->intervalTime)) {
     /*
@@ -2674,7 +2674,7 @@ char *getPosInResultPage(SQueryRuntimeEnv *pRuntimeEnv, int32_t columnIndex, SWi
 //    return TSDB_CODE_SUCCESS;
 //  }
 //
-//  int64_t rs = taosGetIntervalStartTimestamp(pSupporter->rawSKey, pQuery->intervalTime, pQuery->intervalTimeUnit,
+//  int64_t rs = taosGetIntervalStartTimestamp(pSupporter->rawSKey, pQuery->intervalTime, pQuery->slidingTimeUnit,
 //                                             pQuery->precision);
 //  taosInitInterpoInfo(&pRuntimeEnv->interpoInfo, pQuery->order.order, rs, 0, 0);
 //  allocMemForInterpo(pSupporter, pQuery, pMeterObj);
@@ -2810,7 +2810,7 @@ int32_t vnodeSTableQueryPrepare(SQInfo *pQInfo, SQuery *pQuery, void *param) {
   }
 
   TSKEY revisedStime = taosGetIntervalStartTimestamp(pSupporter->rawSKey, pQuery->intervalTime,
-                                                     pQuery->intervalTimeUnit, pQuery->precision);
+                                                     pQuery->slidingTimeUnit, pQuery->precision);
   taosInitInterpoInfo(&pRuntimeEnv->interpoInfo, pQuery->order.order, revisedStime, 0, 0);
   pRuntimeEnv->stableQuery = true;
 
@@ -4583,7 +4583,7 @@ bool vnodeHasRemainResults(void *handle) {
     // query has completed
     if (Q_STATUS_EQUAL(pQuery->over, QUERY_COMPLETED | QUERY_NO_DATA_TO_CHECK)) {
       TSKEY   ekey = taosGetRevisedEndKey(pSupporter->rawEKey, pQuery->order.order, pQuery->intervalTime,
-                                        pQuery->intervalTimeUnit, pQuery->precision);
+                                        pQuery->slidingTimeUnit, pQuery->precision);
       int32_t numOfTotal = taosGetNumOfResultWithInterpo(pInterpoInfo, (TSKEY *)pRuntimeEnv->pInterpoBuf[0]->data,
                                                          remain, pQuery->intervalTime, ekey, pQuery->pointsToRead);
       return numOfTotal > 0;
@@ -4694,7 +4694,7 @@ int32_t vnodeQueryResultInterpolate(SQInfo *pQInfo, tFilePage **pDst, tFilePage 
     numOfRows = taosNumOfRemainPoints(&pRuntimeEnv->interpoInfo);
 
     TSKEY   ekey = taosGetRevisedEndKey(pSupporter->rawEKey, pQuery->order.order, pQuery->intervalTime,
-                                      pQuery->intervalTimeUnit, pQuery->precision);
+                                      pQuery->slidingTimeUnit, pQuery->precision);
     int32_t numOfFinalRows = taosGetNumOfResultWithInterpo(&pRuntimeEnv->interpoInfo, (TSKEY *)pDataSrc[0]->data,
                                                            numOfRows, pQuery->intervalTime, ekey, pQuery->pointsToRead);
 

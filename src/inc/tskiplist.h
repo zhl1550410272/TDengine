@@ -50,7 +50,7 @@ typedef struct SSkipListNode {
 #define SL_GET_NODE_DATA(n) ((char*)(n) + SL_NODE_HEADER_SIZE((n)->level))
 #define SL_GET_NODE_KEY(s, n) ((s)->keyFn(SL_GET_NODE_DATA(n)))
 
-#define SL_GET_NODE_LEVEL(n) *(int32_t *)((n))
+#define SL_GET_NODE_LEVEL(n) *(uint8_t *)((n))
 
 /*
  * @version 0.3
@@ -183,13 +183,20 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType);
 /**
  *
  * @param pSkipList
- * @param pRes
- * @param fp
- * @param param
  * @return
  */
-int32_t tSkipListIterateList(SSkipList *pSkipList, SSkipListNode ***pRes, bool (*fp)(SSkipListNode *, void *),
-                             void *param);
+size_t tSkipListGetSize(SSkipList* pSkipList);
+
+///**
+// *
+// * @param pSkipList
+// * @param pRes
+// * @param fp
+// * @param param
+// * @return
+// */
+//int32_t tSkipListIterateList(SSkipList *pSkipList, SSkipListNode ***pRes, bool (*fp)(SSkipListNode *, void *),
+//                             void *param);
 
 /*
  * remove only one node of the pKey value.
@@ -206,9 +213,10 @@ bool tSkipListRemove(SSkipList *pSkipList, SSkipListKey *pKey);
  */
 void tSkipListRemoveNode(SSkipList *pSkipList, SSkipListNode *pNode);
 
-int32_t        tSkipListIteratorReset(SSkipList *pSkipList, SSkipListIterator *iter);
-bool           tSkipListIteratorNext(SSkipListIterator *iter);
-SSkipListNode *tSkipListIteratorGet(SSkipListIterator *iter);
+SSkipListIterator* tSkipListCreateIter(SSkipList *pSkipList);
+bool           tSkipListIterNext(SSkipListIterator *iter);
+SSkipListNode *tSkipListIterGet(SSkipListIterator *iter);
+void* tSkipListDestroyIter(SSkipListIterator* iter);
 
 #ifdef __cplusplus
 }

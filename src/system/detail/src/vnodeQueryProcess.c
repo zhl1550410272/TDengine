@@ -14,6 +14,7 @@
  */
 
 #define _DEFAULT_SOURCE
+#include <vnodeDataFilterFunc.h>
 #include "os.h"
 
 #include "taosmsg.h"
@@ -24,8 +25,8 @@
 #include "vnodeRead.h"
 #include "vnodeUtil.h"
 
-#include "vnodeQueryImpl.h"
 #include "vnodeQueryIO.h"
+#include "vnodeQueryImpl.h"
 
 #define ALL_CACHE_BLOCKS_CHECKED(q)                            \
   (((q)->slot == (q)->currentSlot && QUERY_IS_ASC_QUERY(q)) || \
@@ -85,381 +86,183 @@ static void enableExecutionForNextTable(SQueryRuntimeEnv *pRuntimeEnv) {
   }
 }
 
-static void queryOnMultiDataCache(SQInfo *pQInfo, SMeterDataInfo *pMeterDataInfo) {
-  SQuery *               pQuery = &pQInfo->query;
-  STableQuerySupportObj *pSupporter = pQInfo->pTableQuerySupporter;
-  SQueryRuntimeEnv *     pRuntimeEnv = &pQInfo->pTableQuerySupporter->runtimeEnv;
+static bool needToLoadDataBlock(SQuery *pQuery, SDataStatis *pDataStatis, SQLFunctionCtx *pCtx,
+                                int32_t numOfTotalPoints) {
+  if (pDataStatis == NULL) {
+    return true;
+  }
 
-  SMeterSidExtInfo **pMeterSidExtInfo = pSupporter->pMeterSidExtInfo;
+  for (int32_t k = 0; k < pQuery->numOfFilterCols; ++k) {
+    SSingleColumnFilterInfo *pFilterInfo = &pQuery->pFilterInfo[k];
+    int32_t                  colIndex = pFilterInfo->info.colIdx;
 
-  SMeterObj *pTempMeterObj = getMeterObj(pSupporter->pMetersHashTable, pMeterSidExtInfo[0]->sid);
-  assert(pTempMeterObj != NULL);
-
-  __block_search_fn_t searchFn = vnodeSearchKeyFunc[pTempMeterObj->searchAlgorithm];
-  int32_t             step = GET_FORWARD_DIRECTION_FACTOR(pQuery->order.order);
-
-  dTrace("QInfo:%p start to query data in cache", pQInfo);
-  int64_t st = taosGetTimestampUs();
-  int32_t totalBlocks = 0;
-
-  for (int32_t groupIdx = 0; groupIdx < pSupporter->pSidSet->numOfSubSet; ++groupIdx) {
-    int32_t start = pSupporter->pSidSet->starterPos[groupIdx];
-    int32_t end = pSupporter->pSidSet->starterPos[groupIdx + 1] - 1;
-
-    if (isQueryKilled(pQuery)) {
-      return;
+    // this column not valid in current data block
+    if (colIndex < 0 || pDataStatis[colIndex].colId != pFilterInfo->info.data.colId) {
+      continue;
     }
 
-    for (int32_t k = start; k <= end; ++k) {
-      SMeterObj *pMeterObj = getMeterObj(pSupporter->pMetersHashTable, pMeterSidExtInfo[k]->sid);
-      if (pMeterObj == NULL) {
-        dError("QInfo:%p failed to find meterId:%d, continue", pQInfo, pMeterSidExtInfo[k]->sid);
-        continue;
-      }
+    // not support pre-filter operation on binary/nchar data type
+    if (!vnodeSupportPrefilter(pFilterInfo->info.data.type)) {
+      continue;
+    }
 
-      pQInfo->pObj = pMeterObj;
-      pRuntimeEnv->pMeterObj = pMeterObj;
+    // all points in current column are NULL, no need to check its boundary value
+    if (pDataStatis[colIndex].numOfNull == numOfTotalPoints) {
+      continue;
+    }
 
-      if (pMeterDataInfo[k].pMeterQInfo == NULL) {
-        pMeterDataInfo[k].pMeterQInfo =
-            createMeterQueryInfo(pSupporter, pMeterObj->sid, pSupporter->rawSKey, pSupporter->rawEKey);
-      }
+    if (pFilterInfo->info.data.type == TSDB_DATA_TYPE_FLOAT) {
+      float minval = *(double *)(&pDataStatis[colIndex].min);
+      float maxval = *(double *)(&pDataStatis[colIndex].max);
 
-      if (pMeterDataInfo[k].pMeterObj == NULL) {  // no data in disk for this meter, set its pointer
-        setMeterDataInfo(&pMeterDataInfo[k], pMeterObj, k, groupIdx);
-      }
-
-      assert(pMeterDataInfo[k].meterOrderIdx == k && pMeterObj == pMeterDataInfo[k].pMeterObj);
-
-      SMeterQueryInfo *pMeterQueryInfo = pMeterDataInfo[k].pMeterQInfo;
-      restoreIntervalQueryRange(pRuntimeEnv, pMeterQueryInfo);
-
-      /*
-       * Update the query meter column index and the corresponding filter column index
-       * the original column index info may be inconsistent with current meter in cache.
-       *
-       * The stable schema has been changed, but the meter schema, along with the data in cache,
-       * will not be updated until data with new schema arrive.
-       */
-      vnodeUpdateQueryColumnIndex(pQuery, pMeterObj);
-      vnodeUpdateFilterColumnIndex(pQuery);
-
-      if ((pQuery->lastKey > pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
-          (pQuery->lastKey < pQuery->ekey && !QUERY_IS_ASC_QUERY(pQuery))) {
-        dTrace("QInfo:%p vid:%d sid:%d id:%s, query completed, ignore data in cache. qrange:%" PRId64 "-%" PRId64
-               ", lastKey:%" PRId64,
-               pQInfo, pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->skey, pQuery->ekey,
-               pQuery->lastKey);
-
-        continue;
-      }
-
-      qTrace("QInfo:%p vid:%d sid:%d id:%s, query in cache, qrange:%" PRId64 "-%" PRId64 ", lastKey:%" PRId64, pQInfo,
-             pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->skey, pQuery->ekey, pQuery->lastKey);
-
-      /*
-       * find the appropriated start position in cache
-       * NOTE: (taking ascending order query for example)
-       * for the specific query range [pQuery->lastKey, pQuery->ekey], there may be no qualified result in cache.
-       * Therefore, we need the first point that is greater(less) than the pQuery->lastKey, so the boundary check
-       * should be ignored (the fourth parameter).
-       */
-      TSKEY nextKey = getQueryStartPositionInCache(pRuntimeEnv, &pQuery->slot, &pQuery->pos, true);
-      if (nextKey < 0 || !doCheckWithPrevQueryRange(pQuery, nextKey)) {
-        qTrace("QInfo:%p vid:%d sid:%d id:%s, no data qualified in cache, cache blocks:%d, lastKey:%" PRId64, pQInfo,
-               pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->numOfBlocks, pQuery->lastKey);
-        continue;
-      }
-
-      // data in this block may be flushed to disk and this block is allocated to other meter
-      // todo try with remain cache blocks
-      SCacheBlock *pBlock = getCacheDataBlock(pMeterObj, pRuntimeEnv, pQuery->slot);
-      if (pBlock == NULL) {
-        continue;
-      }
-
-      bool        firstCheckSlot = true;
-      SCacheInfo *pCacheInfo = (SCacheInfo *)pMeterObj->pCache;
-
-      for (int32_t i = 0; i < pCacheInfo->maxBlocks; ++i) {
-        pBlock = getCacheDataBlock(pMeterObj, pRuntimeEnv, pQuery->slot);
-
-        /*
-         * 1. pBlock == NULL. The cache block may be flushed to disk, so it is not available, skip and try next
-         * The check for empty block is refactor to getCacheDataBlock function
-         */
-        if (pBlock == NULL) {
-          if (ALL_CACHE_BLOCKS_CHECKED(pQuery)) {
-            break;
-          }
-
-          FORWARD_CACHE_BLOCK_CHECK_SLOT(pQuery->slot, step, pCacheInfo->maxBlocks);
-          continue;
+      for (int32_t i = 0; i < pFilterInfo->numOfFilters; ++i) {
+        if (pFilterInfo->pFilters[i].fp(&pFilterInfo->pFilters[i], (char *)&minval, (char *)&maxval)) {
+          return true;
         }
-
-        setStartPositionForCacheBlock(pQuery, pBlock, &firstCheckSlot);
-
-        TSKEY *primaryKeys = (TSKEY *)pRuntimeEnv->primaryColBuffer->data;
-        TSKEY  key = primaryKeys[pQuery->pos];
-
-        // in handling file data block, the timestamp range validation is done during fetching candidate file blocks
-        if ((key > pSupporter->rawEKey && QUERY_IS_ASC_QUERY(pQuery)) ||
-            (key < pSupporter->rawEKey && !QUERY_IS_ASC_QUERY(pQuery))) {
-          break;
+      }
+    } else {
+      for (int32_t i = 0; i < pFilterInfo->numOfFilters; ++i) {
+        if (pFilterInfo->pFilters[i].fp(&pFilterInfo->pFilters[i], (char *)&pDataStatis[colIndex].min,
+                                        (char *)&pDataStatis[colIndex].max)) {
+          return true;
         }
-
-        if (pQuery->intervalTime == 0) {
-          setExecutionContext(pSupporter, pMeterQueryInfo, k, pMeterDataInfo[k].groupIdx, key);
-        } else {
-          setIntervalQueryRange(pMeterQueryInfo, pSupporter, key);
-          int32_t ret = setAdditionalInfo(pSupporter, k, pMeterQueryInfo);
-          if (ret != TSDB_CODE_SUCCESS) {
-            pQInfo->killed = 1;
-            return;
-          }
-        }
-
-        qTrace("QInfo:%p vid:%d sid:%d id:%s, query in cache, qrange:%" PRId64 "-%" PRId64 ", lastKey:%" PRId64, pQInfo,
-               pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->skey, pQuery->ekey, pQuery->lastKey);
-
-        // only record the key on last block
-        SET_CACHE_BLOCK_FLAG(pRuntimeEnv->blockStatus);
-        SBlockInfo binfo = getBlockInfo(pRuntimeEnv);
-
-        dTrace("QInfo:%p check data block, brange:%" PRId64 "-%" PRId64 ", fileId:%d, slot:%d, pos:%d, bstatus:%d",
-               GET_QINFO_ADDR(pQuery), binfo.keyFirst, binfo.keyLast, pQuery->fileId, pQuery->slot, pQuery->pos,
-               pRuntimeEnv->blockStatus);
-
-        totalBlocks++;
-        stableApplyFunctionsOnBlock(pSupporter, &pMeterDataInfo[k], &binfo, NULL, searchFn);
-
-        if (ALL_CACHE_BLOCKS_CHECKED(pQuery)) {
-          break;
-        }
-
-        FORWARD_CACHE_BLOCK_CHECK_SLOT(pQuery->slot, step, pCacheInfo->maxBlocks);
       }
     }
   }
 
-  int64_t            time = taosGetTimestampUs() - st;
-  SQueryCostSummary *pSummary = &pRuntimeEnv->summary;
+  // todo disable this opt code block temporarily
+  //  for (int32_t i = 0; i < pQuery->numOfOutputCols; ++i) {
+  //    int32_t functId = pQuery->pSelectExpr[i].pBase.functionId;
+  //    if (functId == TSDB_FUNC_TOP || functId == TSDB_FUNC_BOTTOM) {
+  //      return top_bot_datablock_filter(&pCtx[i], functId, (char *)&pField[i].min, (char *)&pField[i].max);
+  //    }
+  //  }
 
-  pSummary->blocksInCache += totalBlocks;
-  pSummary->cacheTimeUs += time;
-  pSummary->numOfTables = pSupporter->pSidSet->numOfSids;
-
-  dTrace("QInfo:%p complete check %d cache blocks, elapsed time:%.3fms", pQInfo, totalBlocks, time / 1000.0);
-
-  setQueryStatus(pQuery, QUERY_NOT_COMPLETED);
+  return true;
 }
 
-static void queryOnMultiDataFiles(SQInfo *pQInfo, SMeterDataInfo *pMeterDataInfo) {
+SArray* loadDataBlockOnDemand(SQueryRuntimeEnv* pRuntimeEnv, SDataBlockInfo* pBlockInfo, SDataStatis** pStatis) {
+  SQuery* pQuery = pRuntimeEnv->pQuery;
+  STsdbQueryHandle* pQueryHandle = pRuntimeEnv->pQueryHandle;
+  
+  uint32_t     r = 0;
+  SArray *     pDataBlock = NULL;
+  
+  STimeWindow *w = &pQueryHandle->window;
+  
+  if (pQuery->numOfFilterCols > 0) {
+    r = BLK_DATA_ALL_NEEDED;
+  } else {
+    for (int32_t i = 0; i < pQuery->numOfOutputCols; ++i) {
+      int32_t functionId = pQuery->pSelectExpr[i].pBase.functionId;
+      int32_t colId = pQuery->pSelectExpr[i].pBase.colInfo.colId;
+      
+      r |= aAggs[functionId].dataReqFunc(&pRuntimeEnv->pCtx[i], w->skey, w->ekey, colId);
+    }
+    
+    if (pRuntimeEnv->pTSBuf > 0 || isIntervalQuery(pQuery)) {
+      r |= BLK_DATA_ALL_NEEDED;
+    }
+  }
+  
+  if (r == BLK_DATA_NO_NEEDED) {
+    //      qTrace("QInfo:%p vid:%d sid:%d id:%s, slot:%d, data block ignored, brange:%" PRId64 "-%" PRId64 ",
+    //      rows:%d", GET_QINFO_ADDR(pQuery), pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->slot,
+    //             pBlock->keyFirst, pBlock->keyLast, pBlock->numOfPoints);
+  } else if (r == BLK_DATA_FILEDS_NEEDED) {
+    if (tsdbRetrieveDataBlockStatisInfo(pRuntimeEnv->pQueryHandle, pStatis) != TSDB_CODE_SUCCESS) {
+      //        return DISK_DATA_LOAD_FAILED;
+    }
+    
+    if (pStatis == NULL) {
+      pDataBlock = tsdbRetrieveDataBlock(pRuntimeEnv->pQueryHandle, NULL);
+    }
+  } else {
+    assert(r == BLK_DATA_ALL_NEEDED);
+    if (tsdbRetrieveDataBlockStatisInfo(pRuntimeEnv->pQueryHandle, pStatis) != TSDB_CODE_SUCCESS) {
+      //        return DISK_DATA_LOAD_FAILED;
+    }
+    
+    /*
+     * if this block is completed included in the query range, do more filter operation
+     * filter the data block according to the value filter condition.
+     * no need to load the data block, continue for next block
+     */
+    if (!needToLoadDataBlock(pQuery, *pStatis, pRuntimeEnv->pCtx, pBlockInfo->size)) {
+#if defined(_DEBUG_VIEW)
+      dTrace("QInfo:%p fileId:%d, slot:%d, block discarded by per-filter", GET_QINFO_ADDR(pQuery), pQuery->fileId,
+               pQuery->slot);
+#endif
+      //        return DISK_DATA_DISCARDED;
+    }
+    
+    pDataBlock = tsdbRetrieveDataBlock(pRuntimeEnv->pQueryHandle, NULL);
+  }
+  
+  return pDataBlock;
+}
+
+static void queryOnMultiDataFiles_(SQInfo *pQInfo, SMeterDataInfo *pMeterDataInfo) {
   SQuery *               pQuery = &pQInfo->query;
   STableQuerySupportObj *pSupporter = pQInfo->pTableQuerySupporter;
   SQueryRuntimeEnv *     pRuntimeEnv = &pSupporter->runtimeEnv;
-  SMeterDataBlockInfoEx *pDataBlockInfoEx = NULL;
-  int32_t                nAllocBlocksInfoSize = 0;
 
   SMeterObj *         pTempMeter = getMeterObj(pSupporter->pMetersHashTable, pSupporter->pMeterSidExtInfo[0]->sid);
   __block_search_fn_t searchFn = vnodeSearchKeyFunc[pTempMeter->searchAlgorithm];
 
-  int32_t          vnodeId = pTempMeter->vnode;
   SQueryFilesInfo *pVnodeFileInfo = &pRuntimeEnv->vnodeFileInfo;
 
   dTrace("QInfo:%p start to check data blocks in %d files", pQInfo, pVnodeFileInfo->numOfFiles);
 
-  int32_t            fid = QUERY_IS_ASC_QUERY(pQuery) ? -1 : INT32_MAX;
-  int32_t            step = GET_FORWARD_DIRECTION_FACTOR(pQuery->order.order);
-  SQueryCostSummary *pSummary = &pRuntimeEnv->summary;
-
-  int64_t totalBlocks = 0;
-  int64_t st = taosGetTimestampUs();
-
-  while (1) {
+  STsdbQueryHandle *pQueryHandle = pRuntimeEnv->pQueryHandle;
+  while (tsdbNextDataBlock(pQueryHandle)) {
     if (isQueryKilled(pQuery)) {
       break;
     }
 
-    int32_t fileIdx = vnodeGetVnodeHeaderFileIndex(&fid, pRuntimeEnv, pQuery->order.order);
-    if (fileIdx < 0) {  // no valid file, abort current search
-      break;
-    }
+    // prepare the SMeterDataInfo struct for each table
 
-    pRuntimeEnv->startPos.fileId = fid;
-    pQuery->fileId = fid;
-    pSummary->numOfFiles++;
-
-    if (vnodeGetHeaderFile(pRuntimeEnv, fileIdx) != TSDB_CODE_SUCCESS) {
-      fid += step;
-      continue;
-    }
-
-    int32_t numOfQualifiedMeters = 0;
-    assert(fileIdx == pRuntimeEnv->vnodeFileInfo.current);
-
-    SMeterDataInfo **pReqMeterDataInfo = NULL;
-    int32_t          ret = vnodeFilterQualifiedMeters(pQInfo, vnodeId, pSupporter->pSidSet, pMeterDataInfo,
-                                             &numOfQualifiedMeters, &pReqMeterDataInfo);
-    if (ret != TSDB_CODE_SUCCESS) {
-      dError("QInfo:%p failed to create meterdata struct to perform query processing, abort", pQInfo);
-
-      tfree(pReqMeterDataInfo);
-      pQInfo->code = -ret;
-      pQInfo->killed = 1;
-
-      return;
-    }
-
-    dTrace("QInfo:%p file:%s, %d meters qualified", pQInfo, pVnodeFileInfo->dataFilePath, numOfQualifiedMeters);
-
-    // none of meters in query set have pHeaderFileData in this file, try next file
-    if (numOfQualifiedMeters == 0) {
-      fid += step;
-      tfree(pReqMeterDataInfo);
-      continue;
-    }
-
-    uint32_t numOfBlocks = 0;
-    ret = getDataBlocksForMeters(pSupporter, pQuery, numOfQualifiedMeters, pVnodeFileInfo->headerFilePath,
-                                 pReqMeterDataInfo, &numOfBlocks);
-    if (ret != TSDB_CODE_SUCCESS) {
-      dError("QInfo:%p failed to get data block before scan data blocks, abort", pQInfo);
-
-      tfree(pReqMeterDataInfo);
-      pQInfo->code = -ret;
-      pQInfo->killed = 1;
-
-      return;
-    }
-
-    dTrace("QInfo:%p file:%s, %d meters contains %d blocks to be checked", pQInfo, pVnodeFileInfo->dataFilePath,
-           numOfQualifiedMeters, numOfBlocks);
-
-    if (numOfBlocks == 0) {
-      fid += step;
-      tfree(pReqMeterDataInfo);
-      continue;
-    }
-
-    ret = createDataBlocksInfoEx(pReqMeterDataInfo, numOfQualifiedMeters, &pDataBlockInfoEx, numOfBlocks,
-                                 &nAllocBlocksInfoSize, (int64_t)pQInfo);
-    if (ret != TSDB_CODE_SUCCESS) {  // failed to create data blocks
-      dError("QInfo:%p build blockInfoEx failed, abort", pQInfo);
-      tfree(pReqMeterDataInfo);
-
-      pQInfo->code = -ret;
-      pQInfo->killed = 1;
-      return;
-    }
-
-    dTrace("QInfo:%p start to load %d blocks and check", pQInfo, numOfBlocks);
-    int64_t TRACE_OUTPUT_BLOCK_CNT = 10000;
-    int64_t stimeUnit = 0;
-    int64_t etimeUnit = 0;
-
-    totalBlocks += numOfBlocks;
-
-    // sequentially scan the pHeaderFileData file
-    int32_t j = QUERY_IS_ASC_QUERY(pQuery) ? 0 : numOfBlocks - 1;
-
-    for (; j < numOfBlocks && j >= 0; j += step) {
-      if (isQueryKilled(pQuery)) {
+    SDataBlockInfo blockInfo = tsdbRetrieveDataBlockInfo(pQueryHandle);
+    SMeterObj *    pMeterObj = getMeterObj(pSupporter->pMetersHashTable, blockInfo.sid);
+    
+    pQInfo->pObj = pMeterObj;
+    pRuntimeEnv->pMeterObj = pMeterObj;
+    
+    SMeterDataInfo *pTableDataInfo = NULL;
+    for (int32_t i = 0; i < pSupporter->pSidSet->numOfSids; ++i) {
+      if (pMeterDataInfo[i].pMeterObj == pMeterObj) {
+        pTableDataInfo = &pMeterDataInfo[i];
         break;
       }
+    }
+    
+    assert(pTableDataInfo != NULL);
+    SMeterQueryInfo *pMeterQueryInfo = pTableDataInfo->pMeterQInfo;
 
-      /* output elapsed time for log every TRACE_OUTPUT_BLOCK_CNT blocks */
-      if (j == 0) {
-        stimeUnit = taosGetTimestampMs();
-      } else if ((j % TRACE_OUTPUT_BLOCK_CNT) == 0) {
-        etimeUnit = taosGetTimestampMs();
-        dTrace("QInfo:%p load and check %" PRId64 " blocks, and continue. elapsed:%" PRId64 " ms", pQInfo,
-               TRACE_OUTPUT_BLOCK_CNT, etimeUnit - stimeUnit);
-        stimeUnit = taosGetTimestampMs();
-      }
-
-      SMeterDataBlockInfoEx *pInfoEx = &pDataBlockInfoEx[j];
-      SMeterDataInfo *       pOneMeterDataInfo = pInfoEx->pMeterDataInfo;
-      SMeterQueryInfo *      pMeterQueryInfo = pOneMeterDataInfo->pMeterQInfo;
-      SMeterObj *            pMeterObj = pOneMeterDataInfo->pMeterObj;
-
-      pQInfo->pObj = pMeterObj;
-      pRuntimeEnv->pMeterObj = pMeterObj;
-
-      restoreIntervalQueryRange(pRuntimeEnv, pMeterQueryInfo);
-
-      if ((pQuery->lastKey > pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
-          (pQuery->lastKey < pQuery->ekey && !QUERY_IS_ASC_QUERY(pQuery))) {
-        qTrace("QInfo:%p vid:%d sid:%d id:%s, query completed, no need to scan this data block. qrange:%" PRId64
-               "-%" PRId64 ", lastKey:%" PRId64,
-               pQInfo, pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->skey, pQuery->ekey,
-               pQuery->lastKey);
-
-        continue;
-      }
-
-      SCompBlock *pBlock = pInfoEx->pBlock.compBlock;
-      bool        ondemandLoad = onDemandLoadDatablock(pQuery, pMeterQueryInfo->queryRangeSet);
-      ret = LoadDatablockOnDemand(pBlock, &pInfoEx->pBlock.fields, &pRuntimeEnv->blockStatus, pRuntimeEnv, fileIdx,
-                                  pInfoEx->blockIndex, searchFn, ondemandLoad);
-      if (ret != DISK_DATA_LOADED) {
-        pSummary->skippedFileBlocks++;
-        continue;
-      }
-
-      SBlockInfo binfo = getBlockBasicInfo(pRuntimeEnv, pBlock, BLK_FILE_BLOCK);
-      int64_t    nextKey = -1;
-
-      assert(pQuery->pos >= 0 && pQuery->pos < pBlock->numOfPoints);
-      TSKEY *primaryKeys = (TSKEY *)pRuntimeEnv->primaryColBuffer->data;
-
-      if (IS_DATA_BLOCK_LOADED(pRuntimeEnv->blockStatus) && needPrimaryTimestampCol(pQuery, &binfo)) {
-        nextKey = primaryKeys[pQuery->pos];
-
-        if (!doCheckWithPrevQueryRange(pQuery, nextKey)) {
-          qTrace("QInfo:%p vid:%d sid:%d id:%s, no data qualified in data file, lastKey:%" PRId64, pQInfo,
-                 pMeterObj->vnode, pMeterObj->sid, pMeterObj->meterId, pQuery->numOfBlocks, pQuery->lastKey);
-          continue;
-        }
-      } else {
-        // if data block is not loaded, it must be the intermediate blocks
-        assert((pBlock->keyFirst >= pQuery->lastKey && pBlock->keyLast <= pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
-               (pBlock->keyFirst >= pQuery->ekey && pBlock->keyLast <= pQuery->lastKey && !QUERY_IS_ASC_QUERY(pQuery)));
-        nextKey = QUERY_IS_ASC_QUERY(pQuery) ? pBlock->keyFirst : pBlock->keyLast;
-      }
-
-      if (pQuery->intervalTime == 0) {
-        setExecutionContext(pSupporter, pMeterQueryInfo, pOneMeterDataInfo->meterOrderIdx, pOneMeterDataInfo->groupIdx,
-                            nextKey);
-      } else {  // interval query
-        setIntervalQueryRange(pMeterQueryInfo, pSupporter, nextKey);
-        ret = setAdditionalInfo(pSupporter, pOneMeterDataInfo->meterOrderIdx, pMeterQueryInfo);
-        if (ret != TSDB_CODE_SUCCESS) {
-          tfree(pReqMeterDataInfo);  // error code has been set
-          pQInfo->killed = 1;
-          return;
-        }
-      }
-
-      stableApplyFunctionsOnBlock(pSupporter, pOneMeterDataInfo, &binfo, pInfoEx->pBlock.fields, searchFn);
+    if (pTableDataInfo->pMeterQInfo == NULL) {
+      pTableDataInfo->pMeterQInfo = createMeterQueryInfo(pSupporter, pMeterObj->sid, pQuery->skey, pQuery->ekey);
     }
 
-    tfree(pReqMeterDataInfo);
+    restoreIntervalQueryRange(pRuntimeEnv, pMeterQueryInfo);
 
-    // try next file
-    fid += step;
+    SDataStatis *pStatis = NULL;
+    SArray *pDataBlock = loadDataBlockOnDemand(pRuntimeEnv, &blockInfo, &pStatis);
+    
+    TSKEY nextKey = blockInfo.window.ekey;
+    if (pQuery->intervalTime == 0) {
+      setExecutionContext(pSupporter, pMeterQueryInfo, pTableDataInfo->meterOrderIdx, pTableDataInfo->groupIdx,
+                          nextKey);
+    } else {  // interval query
+      setIntervalQueryRange(pMeterQueryInfo, pSupporter, nextKey);
+      int32_t ret = setAdditionalInfo(pSupporter, pTableDataInfo->meterOrderIdx, pMeterQueryInfo);
+      if (ret != TSDB_CODE_SUCCESS) {
+        pQInfo->killed = 1;
+        return;
+      }
+    }
+
+    stableApplyFunctionsOnBlock_(pSupporter, pTableDataInfo, &blockInfo, pStatis, pDataBlock, searchFn);
   }
-
-  int64_t time = taosGetTimestampUs() - st;
-  dTrace("QInfo:%p complete check %d files, %d blocks, elapsed time:%.3fms", pQInfo, pVnodeFileInfo->numOfFiles,
-         totalBlocks, time / 1000.0);
-
-  pSummary->fileTimeUs += time;
-  pSummary->readDiskBlocks += totalBlocks;
-  pSummary->numOfTables = pSupporter->pSidSet->numOfSids;
-
-  setQueryStatus(pQuery, QUERY_NOT_COMPLETED);
-  freeMeterBlockInfoEx(pDataBlockInfoEx, nAllocBlocksInfoSize);
 }
 
 static bool multimeterMultioutputHelper(SQInfo *pQInfo, bool *dataInDisk, bool *dataInCache, int32_t index,
@@ -490,7 +293,7 @@ static bool multimeterMultioutputHelper(SQInfo *pQInfo, bool *dataInDisk, bool *
   vnodeUpdateQueryColumnIndex(pQuery, pRuntimeEnv->pMeterObj);
   vnodeUpdateFilterColumnIndex(pQuery);
 
-  vnodeCheckIfDataExists(pRuntimeEnv, pMeterObj, dataInDisk, dataInCache);
+//  vnodeCheckIfDataExists(pRuntimeEnv, pMeterObj, dataInDisk, dataInCache);
 
   // data in file or cache is not qualified for the query. abort
   if (!(dataInCache || dataInDisk)) {
@@ -536,11 +339,12 @@ static int64_t doCheckMetersInGroup(SQInfo *pQInfo, int32_t index, int32_t start
 
   SPointInterpoSupporter pointInterpSupporter = {0};
   pointInterpSupporterInit(pQuery, &pointInterpSupporter);
-
-  if (!normalizedFirstQueryRange(dataInDisk, dataInCache, pSupporter, &pointInterpSupporter, NULL)) {
-    pointInterpSupporterDestroy(&pointInterpSupporter);
-    return 0;
-  }
+  assert(0);
+  
+//  if (!normalizedFirstQueryRange(dataInDisk, dataInCache, pSupporter, &pointInterpSupporter, NULL)) {
+//    pointInterpSupporterDestroy(&pointInterpSupporter);
+//    return 0;
+//  }
 
   /*
    * here we set the value for before and after the specified time into the
@@ -709,13 +513,14 @@ static void vnodeSTableSeqProcessor(SQInfo *pQInfo) {
 #endif
 
       SPointInterpoSupporter pointInterpSupporter = {0};
-      if (normalizedFirstQueryRange(dataInDisk, dataInCache, pSupporter, &pointInterpSupporter, NULL) == false) {
-        pQuery->skey = pSupporter->rawSKey;
-        pQuery->ekey = pSupporter->rawEKey;
-
-        pSupporter->meterIdx++;
-        continue;
-      }
+      assert(0);
+//      if (normalizedFirstQueryRange(dataInDisk, dataInCache, pSupporter, &pointInterpSupporter, NULL) == false) {
+//        pQuery->skey = pSupporter->rawSKey;
+//        pQuery->ekey = pSupporter->rawEKey;
+//
+//        pSupporter->meterIdx++;
+//        continue;
+//      }
 
       // TODO handle the limit problem
       if (pQuery->numOfFilterCols == 0 && pQuery->limit.offset > 0) {
@@ -832,20 +637,36 @@ static void doOrderedScan(SQInfo *pQInfo) {
   STableQuerySupportObj *pSupporter = pQInfo->pTableQuerySupporter;
   SQuery *               pQuery = &pQInfo->query;
 
-  if (QUERY_IS_ASC_QUERY(pQuery)) {
-    queryOnMultiDataFiles(pQInfo, pSupporter->pMeterDataInfo);
-    if (pQInfo->code != TSDB_CODE_SUCCESS) {
-      return;
+  if (pSupporter->pMeterDataInfo == NULL) {
+    pSupporter->pMeterDataInfo = calloc(pSupporter->pSidSet->numOfSids, sizeof(SMeterDataInfo));
+  }
+
+  SMeterSidExtInfo **pMeterSidExtInfo = pSupporter->pMeterSidExtInfo;
+  
+  tSidSet* pSidset = pSupporter->pSidSet;
+  int32_t groupId = 0;
+
+  for (int32_t i = 0; i < pSidset->numOfSids; ++i) {  // load all meter meta info
+    SMeterObj *pMeterObj = getMeterObj(pSupporter->pMetersHashTable, pMeterSidExtInfo[i]->sid);
+    if (pMeterObj == NULL) {
+      dError("QInfo:%p failed to find required sid:%d", pQInfo, pMeterSidExtInfo[i]->sid);
+      continue;
     }
 
-    queryOnMultiDataCache(pQInfo, pSupporter->pMeterDataInfo);
-  } else {
-    queryOnMultiDataCache(pQInfo, pSupporter->pMeterDataInfo);
-    if (pQInfo->code != TSDB_CODE_SUCCESS) {
-      return;
+    if (i >= pSidset->starterPos[groupId + 1]) {
+      groupId += 1;
     }
 
-    queryOnMultiDataFiles(pQInfo, pSupporter->pMeterDataInfo);
+    SMeterDataInfo *pOneMeterDataInfo = &pSupporter->pMeterDataInfo[i];
+    assert(pOneMeterDataInfo->pMeterObj == NULL);
+    
+    setMeterDataInfo(pOneMeterDataInfo, pMeterObj, i, groupId);
+    pOneMeterDataInfo->pMeterQInfo = createMeterQueryInfo(pSupporter, pMeterObj->sid, pQuery->skey, pQuery->ekey);
+  }
+
+  queryOnMultiDataFiles_(pQInfo, pSupporter->pMeterDataInfo);
+  if (pQInfo->code != TSDB_CODE_SUCCESS) {
+    return;
   }
 }
 
@@ -944,6 +765,7 @@ static void vnodeMultiMeterQueryProcessor(SQInfo *pQInfo) {
   dTrace("QInfo:%p main query scan start", pQInfo);
   int64_t st = taosGetTimestampMs();
   doOrderedScan(pQInfo);
+  
   int64_t et = taosGetTimestampMs();
   dTrace("QInfo:%p main scan completed, elapsed time: %lldms, supplementary scan start, order:%d", pQInfo, et - st,
          pQuery->order.order ^ 1u);
@@ -1003,8 +825,8 @@ static void vnodeSingleTableFixedOutputProcessor(SQInfo *pQInfo) {
 
   // since the numOfOutputElems must be identical for all sql functions that are allowed to be executed simutanelously.
   pQuery->pointsRead = getNumOfResult(pRuntimeEnv);
-//  assert(pQuery->pointsRead <= pQuery->pointsToRead &&
-//         Q_STATUS_EQUAL(pQuery->over, QUERY_COMPLETED | QUERY_NO_DATA_TO_CHECK));
+  //  assert(pQuery->pointsRead <= pQuery->pointsToRead &&
+  //         Q_STATUS_EQUAL(pQuery->over, QUERY_COMPLETED | QUERY_NO_DATA_TO_CHECK));
 
   // must be top/bottom query if offset > 0
   if (pQuery->limit.offset > 0) {
@@ -1018,6 +840,7 @@ static void vnodeSingleTableFixedOutputProcessor(SQInfo *pQInfo) {
 }
 
 static void vnodeSingleTableMultiOutputProcessor(SQInfo *pQInfo) {
+#if 0
   SQuery *   pQuery = &pQInfo->query;
   SMeterObj *pMeterObj = pQInfo->pObj;
 
@@ -1077,15 +900,17 @@ static void vnodeSingleTableMultiOutputProcessor(SQInfo *pQInfo) {
   if (!isTSCompQuery(pQuery)) {
     assert(pQuery->pointsRead <= pQuery->pointsToRead);
   }
+  
+#endif
 }
 
 static void vnodeSingleMeterIntervalMainLooper(STableQuerySupportObj *pSupporter, SQueryRuntimeEnv *pRuntimeEnv) {
   SQuery *pQuery = pRuntimeEnv->pQuery;
-  
+
   while (1) {
     initCtxOutputBuf(pRuntimeEnv);
     vnodeScanAllData(pRuntimeEnv);
-    
+
     if (isQueryKilled(pQuery)) {
       return;
     }
@@ -1110,7 +935,7 @@ static void vnodeSingleMeterIntervalMainLooper(STableQuerySupportObj *pSupporter
     }
 
     // load the data block for the next retrieve
-    loadRequiredBlockIntoMem(pRuntimeEnv, &pRuntimeEnv->nextPos);
+//    loadRequiredBlockIntoMem(pRuntimeEnv, &pRuntimeEnv->nextPos);
     if (Q_STATUS_EQUAL(pQuery->over, QUERY_RESBUF_FULL)) {
       break;
     }
@@ -1167,7 +992,7 @@ static void vnodeSingleTableIntervalProcessor(SQInfo *pQInfo) {
   }
 
   // all data scanned, the group by normal column can return
-  if (isGroupbyNormalCol(pQuery->pGroupbyExpr)) {//todo refactor with merge interval time result
+  if (isGroupbyNormalCol(pQuery->pGroupbyExpr)) {  // todo refactor with merge interval time result
     pSupporter->subgroupIdx = 0;
     pQuery->pointsRead = 0;
     copyFromWindowResToSData(pQInfo, pRuntimeEnv->windowResInfo.pResult);
@@ -1242,7 +1067,7 @@ void vnodeSingleTableQuery(SSchedMsg *pMsg) {
     // continue to get push data from the group result
     if (isGroupbyNormalCol(pQuery->pGroupbyExpr) ||
         (pQuery->intervalTime > 0 && pQInfo->pointsReturned < pQuery->limit.limit)) {
-      //todo limit the output for interval query?
+      // todo limit the output for interval query?
       pQuery->pointsRead = 0;
       pSupporter->subgroupIdx = 0;  // always start from 0
 
@@ -1278,7 +1103,6 @@ void vnodeSingleTableQuery(SSchedMsg *pMsg) {
 
   /* number of points returned during this query  */
   pQuery->pointsRead = 0;
-//  assert(pQuery->pos >= 0 && pQuery->slot >= 0);
 
   int64_t st = taosGetTimestampUs();
 

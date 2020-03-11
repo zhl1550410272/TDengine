@@ -167,16 +167,8 @@ typedef struct SWindowResInfo {
 } SWindowResInfo;
 
 typedef struct SQueryRuntimeEnv {
-  SPositionInfo       startPos; /* the start position, used for secondary/third iteration */
-  SPositionInfo       endPos;   /* the last access position in query, served as the start pos of reversed order query */
-  SPositionInfo       nextPos;  /* start position of the next scan */
   SData*              colDataBuffer[TSDB_MAX_COLUMNS];
   SResultInfo*        resultInfo;   // todo refactor to merge with SWindowResInfo
-  uint8_t             blockStatus;  // Indicate if data block is loaded, the block is first/last/internal block
-  int32_t             unzipBufSize;
-  SData*              primaryColBuffer;
-  char*               unzipBuffer;
-  char*               secondaryUnzipBuffer;
   SQuery*             pQuery;
   SMeterObj*          pMeterObj;
   SQLFunctionCtx*     pCtx;
@@ -196,14 +188,6 @@ typedef struct SQueryRuntimeEnv {
   SQueryCostSummary   summary;
   bool                stableQuery;  // is super table query or not
   SQueryDiskbasedResultBuf*    pResultBuf;   // query result buffer based on blocked-wised disk file
-  
-  /*
-   * Temporarily hold the in-memory cache block info during scan cache blocks
-   * Here we do not use the cache block info from pMeterObj, simple because it may change anytime
-   * during the query by the submit/insert handling threads.
-   * So we keep a copy of the support structure as well as the cache block data itself.
-   */
-  SCacheBlock         cacheBlock;
   
   void* pQueryHandle;
 } SQueryRuntimeEnv;
@@ -262,7 +246,6 @@ typedef struct STableQuerySupportObj {
   int32_t meterIdx;
 
   int32_t numOfGroupResultPages;
-  int32_t groupResultSize;
   SMeterDataInfo* pMeterDataInfo;
 
   TSKEY* tsList;

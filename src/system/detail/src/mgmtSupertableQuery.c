@@ -230,8 +230,37 @@ static void mgmtRetrieveFromLikeOptr(tQueryResultset* pRes, const char* str, STa
   SPatternCompareInfo       info = PATTERN_COMPARE_INFO_INITIALIZER;
   SMeterNameFilterSupporter supporter = {info, (char*) str};
 
-  pRes->num =
-      tSkipListIterateList(pMetric->pSkipList, (SSkipListNode***)&pRes->pRes, mgmtTablenameFilterCallback, &supporter);
+  SSkipListIterator* iter = tSkipListCreateIter(pMetric->pSkipList);
+  /*
+   * for (int32_t i = 0; i < pSkipList->nSize; ++i) {
+//    if (pStartNode == NULL) {
+//      pError("error skiplist %p, required length:%d, actual length:%d", pSkipList, pSkipList->nSize, i - 1);
+//#ifdef _DEBUG_VIEW
+//      tSkipListPrint(pSkipList, 1);
+//#endif
+//      break;
+//    }
+//
+//    if (fp == NULL || (fp != NULL && fp(pStartNode, param) == true)) {
+//      (*pRes)[num++] = pStartNode;
+//    }
+//
+//    pStartNode = pStartNode->pForward[0];
+//  }
+   */
+  int32_t num = 0;
+  pRes->pRes = calloc(tSkipListGetSize(pMetric->pSkipList), POINTER_BYTES);
+  
+  while(tSkipListIterNext(iter)) {
+    SSkipListNode* pNode = tSkipListIterGet(iter);
+//    char* data = SL_GET_NODE_DATA(pNode);
+    
+    if (mgmtTablenameFilterCallback(pNode, &supporter)) {
+      pRes->pRes[num++] = pNode;
+    }
+  }
+//  pRes->num =
+//      tSkipListIterateList(pMetric->pSkipList, (SSkipListNode***)&pRes->pRes, mgmtTablenameFilterCallback, &supporter);
 }
 
 static void mgmtFilterByTableNameCond(tQueryResultset* pRes, char* condStr, int32_t len, STabObj* pMetric) {
@@ -428,8 +457,10 @@ static void tansformQueryResult(tQueryResultset* pRes) {
   }
 
   for (int32_t i = 0; i < pRes->num; ++i) {
-    assert(0);
-//    pRes->pRes[i] = ((SSkipListNode*)(pRes->pRes[i]))->pData;
+    SSkipListNode* pNode = pRes->pRes[i];
+    char* data = SL_GET_NODE_DATA(pNode);
+    
+    pRes->pRes[i] = data;
   }
 }
 
@@ -800,8 +831,17 @@ int mgmtRetrieveMetersFromMetric(SMetricMetaMsg* pMsg, int32_t tableIndex, tQuer
     }
   } else {
     mTrace("metric:%s retrieve all meter, no query condition", pMetric->meterId);
-    pRes->num = tSkipListIterateList(pMetric->pSkipList, (SSkipListNode***)&pRes->pRes, NULL, NULL);
-    tansformQueryResult(pRes);
+  
+    SSkipListIterator* iter = tSkipListCreateIter(pMetric->pSkipList);
+    pRes->pRes = calloc(pMetric->pSkipList->size, POINTER_BYTES);
+  
+    int32_t n = 0;
+    while (tSkipListIterNext(iter)) {
+      SSkipListNode *pNode = tSkipListIterGet(iter);
+      pRes->pRes[n++] = *(STabObj**)(SL_GET_NODE_DATA(pNode) + pMetric->pSkipList->keyInfo.len);
+    }
+    
+    pRes->num = n;
   }
 
   tfree(pCond);

@@ -722,16 +722,13 @@ static void tSQLBinaryTraverseOnResult(tSQLBinaryExpr *pExpr, tQueryResultset *p
 
 static void tSQLBinaryTraverseOnSkipList(tSQLBinaryExpr *pExpr, tQueryResultset *pResult, SSkipList *pSkipList,
                                          SBinaryFilterSupp *param) {
-  int32_t           n = 0;
-  SSkipListIterator iter = {0};
+  int32_t n = 0;
 
-  int32_t ret = tSkipListIteratorReset(pSkipList, &iter);
-  assert(ret == 0);
-
+  SSkipListIterator* iter = tSkipListCreateIter(pSkipList);
   pResult->pRes = calloc(pSkipList->size, POINTER_BYTES);
 
-  while (tSkipListIteratorNext(&iter)) {
-    SSkipListNode *pNode = tSkipListIteratorGet(&iter);
+  while (tSkipListIterNext(iter)) {
+    SSkipListNode *pNode = tSkipListIterGet(iter);
     if (filterItem(pExpr, pNode, param)) {
       pResult->pRes[n++] = pNode;
     }
