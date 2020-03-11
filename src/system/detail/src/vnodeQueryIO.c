@@ -742,16 +742,18 @@ static int32_t loadDataBlockIntoMem_(STsdbQueryHandle *pQueryHandle, SCompBlock 
       ++i;
       ++j;
     } else {
-      SData *         sdata = NULL;
+      SData *sdata = NULL;
       SColumnInfoEx_ *pColumn = NULL;
       for (int32_t k = 0; k < QH_GET_NUM_OF_COLS(pQueryHandle); ++k) {
-        pColumn = taosArrayGet(pQueryHandle->pColumns, i);
+        pColumn = taosArrayGet(pQueryHandle->pColumns, k);
         if (pColumn->info.colId == colId) {
           sdata = pColumn->pData;
           break;
         }
       }
 
+      assert(sdata != NULL);
+      
       // this column is not existed in current block, fill with NULL value
       fillWithNull_(&pColumn->info, sdata->data, pBlock->numOfPoints);
       ++i;
@@ -3100,7 +3102,7 @@ bool tsdbNextDataBlock(STsdbQueryHandle *pQueryHandle) {
 SDataBlockInfo tsdbRetrieveDataBlockInfo(STsdbQueryHandle *pQueryHandle) { return getBlockInfo_(pQueryHandle); }
 
 static bool completedIncluded(STimeWindow *win, SDataBlockInfo *pBlockInfo) {
-  return (win->skey > pBlockInfo->window.skey || win->ekey < pBlockInfo->window.ekey);
+  return !(win->skey > pBlockInfo->window.skey || win->ekey < pBlockInfo->window.ekey);
 }
 
 int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SDataStatis **pBlockStatis) {
@@ -3193,7 +3195,7 @@ SArray *tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList) {
   SDataBlockInfo blockInfo = getTrueBlockInfo(pQueryHandle);
 
   if (!completedIncluded(&pQueryHandle->window, &blockInfo)) {
-    int32_t colId = *(int32_t *)taosArrayGet(pLocalIdList, 0);
+    int16_t colId = *(int16_t *)taosArrayGet(pLocalIdList, 0);
 
     // the primary timestamp column does not be included in the the specified load column list, add it
     if (colId != 0) {

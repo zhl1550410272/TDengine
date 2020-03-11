@@ -179,7 +179,31 @@ void closeAllTimeWindow(SWindowResInfo *pWindowResInfo) {
   assert(pWindowResInfo->size >= 0 && pWindowResInfo->capacity >= pWindowResInfo->size);
   
   for (int32_t i = 0; i < pWindowResInfo->size; ++i) {
+    if (pWindowResInfo->pResult[i].status.closed) {
+      continue;
+    }
+    
     pWindowResInfo->pResult[i].status.closed = true;
+  }
+}
+
+/*
+ * remove the results that are not the FIRST time window that spreads beyond the
+ * the last qualified time stamp in case of sliding query, which the sliding time is not equalled to the interval time
+ */
+void removeRedundantWindow(SWindowResInfo *pWindowResInfo, TSKEY lastKey, int32_t order) {
+  assert(pWindowResInfo->size >= 0 && pWindowResInfo->capacity >= pWindowResInfo->size);
+  
+  int32_t i = 0;
+  while(i < pWindowResInfo->size &&
+  ((pWindowResInfo->pResult[i].window.ekey < lastKey && order == QUERY_ASC_FORWARD_STEP) ||
+      (pWindowResInfo->pResult[i].window.skey > lastKey && order == QUERY_DESC_FORWARD_STEP))) {
+    ++i;
+  }
+
+//  assert(i < pWindowResInfo->size);
+  if (i < pWindowResInfo->size) {
+    pWindowResInfo->size = (i + 1);
   }
 }
 

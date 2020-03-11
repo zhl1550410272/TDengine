@@ -538,12 +538,17 @@ static int32_t getNextQualifiedWindow(SQueryRuntimeEnv *pRuntimeEnv, STimeWindow
   SQuery *pQuery = pRuntimeEnv->pQuery;
 
   while (1) {
-    getNextTimeWindow(pQuery, pNextWin);
-
-    if (/*pWindowResInfo->startTime > pNextWin->skey || */(pNextWin->skey > pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
-        (pNextWin->ekey < pQuery->ekey && !QUERY_IS_ASC_QUERY(pQuery))) {
+    if ((pNextWin->ekey > pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
+        (pNextWin->skey < pQuery->ekey && !QUERY_IS_ASC_QUERY(pQuery))) {
       return -1;
     }
+    
+    getNextTimeWindow(pQuery, pNextWin);
+
+//    if ((pNextWin->skey > pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
+//        (pNextWin->ekey < pQuery->ekey && !QUERY_IS_ASC_QUERY(pQuery))) {
+//      return -1;
+//    }
 
     // next time window is not in current block
     if ((pNextWin->skey > pDataBlockInfo->window.ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
@@ -2432,8 +2437,10 @@ static int64_t doScanAllDataBlocks(SQueryRuntimeEnv *pRuntimeEnv) {
         pWindowResInfo->startTime = w.skey;
         pWindowResInfo->prevSKey = w.skey;
       } else {
-        doGetAlignedIntervalQueryRangeImpl(pQuery, blockInfo.window.ekey, pQueryHandle->window.ekey,
-                                           pQueryHandle->window.skey, &skey1, &ekey1, &w);
+        // the start position of the first time window in the endpoint that spreads beyond the queried last timestamp
+        TSKEY winStart = blockInfo.window.ekey - pQuery->intervalTime;
+        doGetAlignedIntervalQueryRangeImpl(pQuery, winStart, pQueryHandle->window.ekey,
+                                           blockInfo.window.ekey, &skey1, &ekey1, &w);
   
         pWindowResInfo->startTime = pQueryHandle->window.skey;
         pWindowResInfo->prevSKey = w.skey;
@@ -2468,17 +2475,13 @@ static int64_t doScanAllDataBlocks(SQueryRuntimeEnv *pRuntimeEnv) {
 
   if (isIntervalQuery(pQuery) && IS_MASTER_SCAN(pRuntimeEnv)) {
     if (Q_STATUS_EQUAL(pQuery->over, QUERY_COMPLETED | QUERY_NO_DATA_TO_CHECK)) {
+      int32_t step = QUERY_IS_ASC_QUERY(pQuery)? QUERY_ASC_FORWARD_STEP:QUERY_DESC_FORWARD_STEP;
+      
       closeAllTimeWindow(&pRuntimeEnv->windowResInfo);
+      removeRedundantWindow(&pRuntimeEnv->windowResInfo, pQuery->lastKey - step, step);
       pRuntimeEnv->windowResInfo.curIndex = pRuntimeEnv->windowResInfo.size - 1;
-    } else if (Q_STATUS_EQUAL(pQuery->over, QUERY_RESBUF_FULL)) {  // check if window needs to be closed
-//      SBlockInfo blockInfo = getBlockInfo(pRuntimeEnv);
-
-      // check if need to close window result or not
-//      TSKEY t = (QUERY_IS_ASC_QUERY(pQuery)) ? blockInfo.keyFirst : blockInfo.keyLast;
-//      doCheckQueryCompleted(pRuntimeEnv, t, &pRuntimeEnv->windowResInfo);
-//      assert(0);
     } else {
-      assert(0);
+      assert(Q_STATUS_EQUAL(pQuery->over, QUERY_RESBUF_FULL));
     }
   }
 

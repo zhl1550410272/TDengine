@@ -280,6 +280,7 @@ void    clearClosedTimeWindow(SQueryRuntimeEnv* pRuntimeEnv);
 int32_t numOfClosedTimeWindow(SWindowResInfo* pWindowResInfo);
 void    closeTimeWindow(SWindowResInfo* pWindowResInfo, int32_t slot);
 void    closeAllTimeWindow(SWindowResInfo* pWindowResInfo);
+void    removeRedundantWindow(SWindowResInfo *pWindowResInfo, TSKEY lastKey, int32_t order);
 SWindowResult *getWindowResult(SWindowResInfo *pWindowResInfo, int32_t slot);
 int32_t curTimeWindow(SWindowResInfo *pWindowResInfo);
 bool isWindowResClosed(SWindowResInfo *pWindowResInfo, int32_t slot);
