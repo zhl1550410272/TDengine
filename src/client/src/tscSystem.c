@@ -181,7 +181,7 @@ void taos_init_imp() {
   refreshTime = refreshTime > 2 ? 2 : refreshTime;
   refreshTime = refreshTime < 1 ? 1 : refreshTime;
 
-  if (tscCacheHandle == NULL) tscCacheHandle = taosInitDataCache(tsMaxMeterConnections / 2, tscTmr, refreshTime);
+  if (tscCacheHandle == NULL) tscCacheHandle = taosInitDataCache(tscTmr, refreshTime);
 
   tscConnCache = taosOpenConnCache(tsMaxMeterConnections * 2, taosCloseRpcConn, tscTmr, tsShellActivityTimer * 1000);
 

@@ -30,7 +30,7 @@ extern "C" {
  *                          not referenced by other objects
  * @return
  */
-void *taosInitDataCache(int maxSessions, void *tmrCtrl, int64_t refreshTimeInSeconds);
+void *taosInitDataCache(void *tmrCtrl, int64_t refreshTimeInSeconds);
 
 /**
  * add data into cache
@@ -55,17 +55,6 @@ void *taosAddDataIntoCache(void *handle, char *key, char *pData, int dataSize, i
 void taosRemoveDataFromCache(void *handle, void **data, bool _remove);
 
 /**
- * update data in cache
- * @param handle hash object handle(pointer)
- * @param key    key for hash
- * @param pData  actually data
- * @param size   length of data
- * @param duration  survival time of this object in cache
- * @return       new referenced data
- */
-void *taosUpdateDataFromCache(void *handle, char *key, char *pData, int size, int duration);
-
-/**
  * get data from cache
  * @param handle        cache object
  * @param key           key
@@ -78,10 +67,10 @@ void *taosGetDataFromCache(void *handle, char *key);
  *
  * @param handle
  */
-void taosCleanUpDataCache(void *handle);
+void taosCleanupDataCache(void *handle);
 
 /**
- *  move all data node into trash,clear node in trash can if it is not referenced by client
+ *  move all data node into trash, clear node in trash can if it is not referenced by any clients
  * @param handle
  */
 void taosClearDataCache(void *handle);

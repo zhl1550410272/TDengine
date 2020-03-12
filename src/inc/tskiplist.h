@@ -185,18 +185,7 @@ SArray* tSkipListGet(SSkipList *pSkipList, SSkipListKey pKey, int16_t keyType);
  * @param pSkipList
  * @return
  */
-size_t tSkipListGetSize(SSkipList* pSkipList);
-
-///**
-// *
-// * @param pSkipList
-// * @param pRes
-// * @param fp
-// * @param param
-// * @return
-// */
-//int32_t tSkipListIterateList(SSkipList *pSkipList, SSkipListNode ***pRes, bool (*fp)(SSkipListNode *, void *),
-//                             void *param);
+size_t tSkipListGetSize(const SSkipList* pSkipList);
 
 /*
  * remove only one node of the pKey value.
