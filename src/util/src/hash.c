@@ -107,7 +107,7 @@ static void doUpdateHashTable(SHashObj *pHashObj, SHashNode *pNode) {
 
 /**
  * get SHashNode from hashlist, nodes from trash are not included.
- * @param pHashObj      Cache objection
+ * @param pHashObj  Cache objection
  * @param key       key for hash
  * @param keyLen    key length
  * @return
@@ -483,6 +483,10 @@ void taosHashCleanup(SHashObj *pHashObj) {
       
       while (pNode) {
         pNext = pNode->next;
+        if (pHashObj->freeFp) {
+          pHashObj->freeFp(pNode->data);
+        }
+        
         free(pNode);
         pNode = pNext;
       }
@@ -499,6 +503,105 @@ void taosHashCleanup(SHashObj *pHashObj) {
   tfree(pHashObj->lock);
   memset(pHashObj, 0, sizeof(SHashObj));
   free(pHashObj);
+}
+
+void taosHashSetFreecb(SHashObj *pHashObj, _hash_free_fn_t freeFp) {
+  if (pHashObj == NULL || freeFp == NULL) {
+    return;
+  }
+  
+  pHashObj->freeFp = freeFp;
+}
+
+SHashMutableIterator* taosHashCreateIter(SHashObj* pHashObj) {
+  SHashMutableIterator* pIter = calloc(1, sizeof(SHashMutableIterator));
+  if (pIter == NULL) {
+    return NULL;
+  }
+  
+  pIter->pHashObj = pHashObj;
+}
+
+static SHashNode* getNextHashNode(SHashMutableIterator* pIter) {
+  assert(pIter != NULL);
+  
+  while (pIter->entryIndex < pIter->pHashObj->capacity) {
+    SHashEntry *pEntry = pIter->pHashObj->hashList[pIter->entryIndex];
+    if (pEntry->next == NULL) {
+      pIter->entryIndex++;
+      continue;
+    }
+    
+    return pEntry->next;
+  }
+  
+  return NULL;
+}
+
+bool taosHashIterNext(SHashMutableIterator* pIter) {
+  if (pIter == NULL){
+    return false;
+  }
+  
+  size_t size = taosHashGetSize(pIter->pHashObj);
+  if (size == 0 || pIter->num >= size) {
+    return false;
+  }
+  
+  // check the first one
+  if (pIter->num == 0) {
+    assert(pIter->pCur == NULL && pIter->pNext == NULL);
+
+    while (1) {
+      SHashEntry *pEntry = pIter->pHashObj->hashList[pIter->entryIndex];
+      if (pEntry->next == NULL) {
+        pIter->entryIndex++;
+        continue;
+      }
+  
+      pIter->pCur = pEntry->next;
+      
+      if (pIter->pCur->next) {
+        pIter->pNext = pIter->pCur->next;
+      } else {
+        pIter->pNext = getNextHashNode(pIter);
+      }
+      
+      break;
+    }
+    
+    pIter->num++;
+    return true;
+  } else {
+    assert(pIter->pCur != NULL);
+    if (pIter->pNext) {
+      pIter->pCur = pIter->pNext;
+    } else { // no more data in the hash list
+      return false;
+    }
+    
+    pIter->num++;
+    
+    if (pIter->pCur->next) {
+      pIter->pNext = pIter->pCur->next;
+    } else {
+      pIter->pNext = getNextHashNode(pIter);
+    }
+    
+    return true;
+  }
+}
+
+void *taosHashIterGet(SHashMutableIterator *iter) {
+  return (iter == NULL)? NULL:iter->pCur->data;
+}
+
+void* taosHashDestroyIter(SHashMutableIterator* iter) {
+  if (iter == NULL) {
+    return NULL;
+  }
+  
+  free(iter);
 }
 
 // for profile only
