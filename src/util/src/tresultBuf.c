@@ -121,7 +121,7 @@ static int32_t addNewGroupId(SQueryDiskbasedResultBuf* pResultBuf, int32_t group
     pResultBuf->numOfAllocGroupIds = n;
   }
 
-  taosHashAdd(pResultBuf->idsTable, (const char*)&groupId, sizeof(int32_t), &num, sizeof(int32_t));
+  taosHashPut(pResultBuf->idsTable, (const char*)&groupId, sizeof(int32_t), &num, sizeof(int32_t));
   return num;
 }
 

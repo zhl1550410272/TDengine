@@ -119,7 +119,7 @@ void clearFirstNTimeWindow(SQueryRuntimeEnv *pRuntimeEnv, int32_t num) {
   for (int32_t i = 0; i < num; ++i) {
     SWindowResult *pResult = &pWindowResInfo->pResult[i];
     if (pResult->status.closed) {  // remove the window slot from hash table
-      taosHashDelete(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
+      taosHashRemove(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
     } else {
       break;
     }
@@ -148,8 +148,8 @@ void clearFirstNTimeWindow(SQueryRuntimeEnv *pRuntimeEnv, int32_t num) {
     assert(v >= 0 && v <= pWindowResInfo->size);
     
     // todo add the update function for hash table
-    taosHashDelete(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
-    taosHashAdd(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE, (char *)&v,
+    taosHashRemove(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE);
+    taosHashPut(pWindowResInfo->hashList, (const char *)&pResult->window.skey, TSDB_KEYSIZE, (char *)&v,
                 sizeof(int32_t));
   }
   

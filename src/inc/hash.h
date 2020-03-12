@@ -33,7 +33,7 @@ typedef struct SHashNode {
     struct SHashNode * prev;
     struct SHashEntry *prev1;
   };
-
+  
   struct SHashNode *next;
   uint32_t          hashVal;  // the hash value of key, if hashVal == HASH_VALUE_IN_TRASH, this node is moved to trash
   uint32_t          keyLen;   // length of the key
@@ -45,70 +45,77 @@ typedef struct SHashEntry {
   uint32_t   num;
 } SHashEntry;
 
-typedef struct HashObj {
+typedef struct SHashObj {
   SHashEntry **hashList;
-  uint32_t     capacity;    // number of slots
-  int32_t      size;        // number of elements in hash table
-  _hash_fn_t   hashFp;      // hash function
-  bool         threadsafe;  // enable lock or not
+  size_t       capacity;         // number of slots
+  size_t       size;             // number of elements in hash table
+  _hash_fn_t   hashFp;           // hash function
 
-#if defined LINUX
-  pthread_rwlock_t lock;
+#if defined (LINUX)
+  pthread_rwlock_t* lock;
 #else
-  pthread_mutex_t lock;
+  pthread_mutex_t*  lock;
 #endif
-
-} HashObj;
+} SHashObj;
 
 /**
- * @param capacity initial capacity available for hash elements
- * @param fn       hash function
+ * init the hash table
+ *
+ * @param capacity    initial capacity of the hash table
+ * @param fn          hash function to generate the hash value
+ * @param threadsafe  thread safe or not
  * @return
  */
-void *taosHashInit(size_t capacity, _hash_fn_t fn, bool threadsafe);
+SHashObj *taosHashInit(size_t capacity, _hash_fn_t fn, bool threadsafe);
 
 /**
- *
- * @param pObj
- * @param key
- * @param keyLen
+ * return the size of hash table
+ * @param pHashObj
+ * @return
  */
-void taosHashDelete(HashObj *pObj, const char *key, size_t keyLen);
+size_t taosHashGetSize(const SHashObj *pHashObj);
 
 /**
- *
- * @param pObj
+ * put element into hash table, if the element with the same key exists, update it
+ * @param pHashObj
  * @param key
  * @param keyLen
  * @param data
  * @param size
  * @return
  */
-int32_t taosHashAdd(HashObj *pObj, const char *key, size_t keyLen, void *data, size_t size);
+int32_t taosHashPut(SHashObj *pHashObj, const char *key, size_t keyLen, void *data, size_t size);
 
 /**
+ * return the payload data with the specified key
  *
- * @param pObj
- * @return
- */
-int32_t taosHashGetSize(HashObj *pObj);
-
-/**
- *
- * @param pObj
+ * @param pHashObj
  * @param key
  * @param keyLen
  * @return
  */
-void *taosHashGet(HashObj *pObj, const char *key, size_t keyLen);
+void *taosHashGet(SHashObj *pHashObj, const char *key, size_t keyLen);
+
+/**
+ * remove item with the specified key
+ * @param pHashObj
+ * @param key
+ * @param keyLen
+ */
+void  taosHashRemove(SHashObj *pHashObj, const char *key, size_t keyLen);
+
+/**
+ * clean up hash table
+ * @param handle
+ */
+void taosHashCleanup(SHashObj *pHashObj);
 
 /**
  *
- * @param handle
+ * @param pHashObj
+ * @return
  */
-void taosHashCleanup(HashObj *pObj);
-
-int32_t taosGetHashMaxOverflowLength(HashObj *pObj);
+int32_t taosHashGetMaxOverflowLinkLength(const SHashObj *pHashObj);
 
 #ifdef __cplusplus
 }

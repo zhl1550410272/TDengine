@@ -257,7 +257,7 @@ static void doInitKeywordsTable() {
   for (int32_t i = 0; i < numOfEntries; i++) {
     keywordTable[i].len = strlen(keywordTable[i].name);
     void* ptr = &keywordTable[i];
-    taosHashAdd(KeywordHashTable, keywordTable[i].name, keywordTable[i].len, (void*)&ptr, POINTER_BYTES);
+    taosHashPut(KeywordHashTable, keywordTable[i].name, keywordTable[i].len, (void*)&ptr, POINTER_BYTES);
   }
 }
 
