@@ -26,6 +26,7 @@ extern "C" {
 #include "tinterpolation.h"
 #include "vnodeTagMgmt.h"
 #include "tarray.h"
+#include "hash.h"
 
 /*
  * use to keep the first point position, consisting of position in blk and block
@@ -207,7 +208,6 @@ typedef struct SMeterQueryInfo {
 } SMeterQueryInfo;
 
 typedef struct SMeterDataInfo {
-  uint64_t     offsetInHeaderFile;
   int32_t      numOfBlocks;
   int32_t      start;  // start block index
   SCompBlock*  pBlock;
@@ -218,7 +218,7 @@ typedef struct SMeterDataInfo {
 } SMeterDataInfo;
 
 typedef struct STableQuerySupportObj {
-  void* pMetersHashTable;   // meter table hash list
+  SHashObj* pMetersHashTable;   // meter table hash list
 
   SMeterSidExtInfo** pMeterSidExtInfo;
   int32_t            numOfMeters;

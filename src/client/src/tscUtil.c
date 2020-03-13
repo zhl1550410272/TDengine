@@ -500,7 +500,7 @@ void tscDestroyDataBlock(STableDataBlocks* pDataBlock) {
   tfree(pDataBlock->params);
 
   // free the refcount for metermeta
-  taosRemoveDataFromCache(tscCacheHandle, (void**)&(pDataBlock->pMeterMeta), false);
+  taosCacheRelease(tscCacheHandle, (void**)&(pDataBlock->pMeterMeta), false);
   tfree(pDataBlock);
 }
 
@@ -584,9 +584,9 @@ int32_t tscCopyDataBlockToPayload(SSqlObj* pSql, STableDataBlocks* pDataBlock) {
   // set the correct metermeta object, the metermeta has been locked in pDataBlocks, so it must be in the cache
   if (pMeterMetaInfo->pMeterMeta != pDataBlock->pMeterMeta) {
     strcpy(pMeterMetaInfo->name, pDataBlock->meterId);
-    taosRemoveDataFromCache(tscCacheHandle, (void**)&(pMeterMetaInfo->pMeterMeta), false);
+    taosCacheRelease(tscCacheHandle, (void**)&(pMeterMetaInfo->pMeterMeta), false);
 
-    pMeterMetaInfo->pMeterMeta = taosTransferDataInCache(tscCacheHandle, (void**)&pDataBlock->pMeterMeta);
+    pMeterMetaInfo->pMeterMeta = taosCacheTransfer(tscCacheHandle, (void**)&pDataBlock->pMeterMeta);
   } else {
     assert(strncmp(pMeterMetaInfo->name, pDataBlock->meterId, tListLen(pDataBlock->meterId)) == 0);
   }
@@ -658,9 +658,9 @@ int32_t tscCreateDataBlock(size_t initialSize, int32_t rowSize, int32_t startOff
   /*
    * The metermeta may be released since the metermeta cache are completed clean by other thread
    * due to operation such as drop database. So here we add the reference count directly instead of invoke
-   * taosGetDataFromCache, which may return NULL value.
+   * taosCacheAcquireByName, which may return NULL value.
    */
-  dataBuf->pMeterMeta = taosGetDataFromExists(tscCacheHandle, pMeterMeta);
+  dataBuf->pMeterMeta = taosCacheAcquireByData(tscCacheHandle, pMeterMeta);
   assert(initialSize > 0 && pMeterMeta != NULL && dataBuf->pMeterMeta != NULL);
 
   *dataBlocks = dataBuf;
@@ -1909,8 +1909,8 @@ void tscClearMeterMetaInfo(SMeterMetaInfo* pMeterMetaInfo, bool removeFromCache)
     return;
   }
 
-  taosRemoveDataFromCache(tscCacheHandle, (void**)&(pMeterMetaInfo->pMeterMeta), removeFromCache);
-  taosRemoveDataFromCache(tscCacheHandle, (void**)&(pMeterMetaInfo->pMetricMeta), removeFromCache);
+  taosCacheRelease(tscCacheHandle, (void**)&(pMeterMetaInfo->pMeterMeta), removeFromCache);
+  taosCacheRelease(tscCacheHandle, (void**)&(pMeterMetaInfo->pMetricMeta), removeFromCache);
 }
 
 void tscResetForNextRetrieve(SSqlRes* pRes) {
@@ -2040,16 +2040,16 @@ SSqlObj* createSubqueryObj(SSqlObj* pSql, int16_t tableIndex, void (*fp)(), void
   SMeterMetaInfo* pFinalInfo = NULL;
 
   if (pPrevSql == NULL) {
-    SMeterMeta*  pMeterMeta = taosGetDataFromCache(tscCacheHandle, name);
-    SMetricMeta* pMetricMeta = taosGetDataFromCache(tscCacheHandle, key);
+    SMeterMeta*  pMeterMeta = taosCacheAcquireByName(tscCacheHandle, name);
+    SMetricMeta* pMetricMeta = taosCacheAcquireByName(tscCacheHandle, key);
 
     pFinalInfo = tscAddMeterMetaInfo(pNewQueryInfo, name, pMeterMeta, pMetricMeta, pMeterMetaInfo->numOfTags,
                                      pMeterMetaInfo->tagColumnIndex);
   } else {  // transfer the ownership of pMeterMeta/pMetricMeta to the newly create sql object.
     SMeterMetaInfo* pPrevInfo = tscGetMeterMetaInfo(&pPrevSql->cmd, pPrevSql->cmd.clauseIndex, 0);
 
-    SMeterMeta*  pPrevMeterMeta = taosTransferDataInCache(tscCacheHandle, (void**)&pPrevInfo->pMeterMeta);
-    SMetricMeta* pPrevMetricMeta = taosTransferDataInCache(tscCacheHandle, (void**)&pPrevInfo->pMetricMeta);
+    SMeterMeta*  pPrevMeterMeta = taosCacheTransfer(tscCacheHandle, (void**)&pPrevInfo->pMeterMeta);
+    SMetricMeta* pPrevMetricMeta = taosCacheTransfer(tscCacheHandle, (void**)&pPrevInfo->pMetricMeta);
 
     pFinalInfo = tscAddMeterMetaInfo(pNewQueryInfo, name, pPrevMeterMeta, pPrevMetricMeta, pMeterMetaInfo->numOfTags,
                                      pMeterMetaInfo->tagColumnIndex);

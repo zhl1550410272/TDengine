@@ -85,7 +85,7 @@ void vnodeInitCompBlockLoadInfo(SLoadCompBlockInfo *pCompBlockLoadInfo);
 
 void getBasicCacheInfoSnapshot(SQuery *pQuery, SCacheInfo *pCacheInfo, int32_t vid);
 
-//TSKEY getQueryPositionForCacheInvalid(SQueryRuntimeEnv *pRuntimeEnv);
+// TSKEY getQueryPositionForCacheInvalid(SQueryRuntimeEnv *pRuntimeEnv);
 
 TSKEY getTimestampInDiskBlock(SQueryRuntimeEnv *pRuntimeEnv, int32_t index);
 TSKEY getTimestampInCacheBlock(SQueryRuntimeEnv *pRuntimeEnv, SCacheBlock *pBlock, int32_t index);
@@ -130,7 +130,7 @@ typedef struct SMeterDataBlockInfoEx_ {
 
 typedef struct STsdbQueryHandle {
   SQueryHandlePos cur;   // current position
-  SQueryHandlePos start; /* the start position, used for secondary/third iteration */
+  SQueryHandlePos start; // the start position, used for secondary/third iteration
   int32_t         unzipBufSize;
 
   SData *tsBuf;  // primary time stamp columns
@@ -144,7 +144,6 @@ typedef struct STsdbQueryHandle {
   int16_t            numOfRowsPerPage;
   uint16_t           flag;  // denotes reversed scan of data or not
   int16_t            order;
-  int16_t            traverseOrder;
   STimeWindow        window;  // the primary query time window that applies to all queries
   TSKEY              lastKey;
   int32_t            blockBufferSize;
@@ -158,33 +157,38 @@ typedef struct STsdbQueryHandle {
   int32_t realNumOfRows;
   bool    loadDataAfterSeek;  // load data after seek.
 
-  int32_t     currentSlot;
-  int32_t     numOfCacheBlocks;
-  int32_t     firstSlot;
-  int32_t     commitSlot;
-  int32_t     commitPoint;
-  int32_t     blockId;
-  SCacheBlock cacheBlock;
+  int32_t currentSlot;
+  int32_t numOfCacheBlocks;
+  int32_t firstSlot;
+  int32_t commitSlot;
+  int32_t commitPoint;
+  int32_t blockId;
 
   SMeterDataBlockInfoEx_ *pDataBlockInfoEx;
   STableQueryRec *        pTableQueryInfo;
   int32_t                 tableIndex;
-  bool isFirstSlot;
-  
-  void* qinfo;  //query info handle, for debug purpose
+  bool                    isFirstSlot;
+  void *                  qinfo;  // query info handle, for debug purpose
+  SCacheBlock             cacheBlock;
 } STsdbQueryHandle;
 
 typedef struct SDataBlockInfo {
   STimeWindow window;
-
-  int32_t size;
-  int32_t numOfCols;
-
-  int64_t uid;
-  int32_t sid;
+  int32_t     size;
+  int32_t     numOfCols;
+  int64_t     uid;
+  int32_t     sid;
 } SDataBlockInfo;
 
-typedef void *tsdbPos_t;
+#define TSDB_TS_GREATER_EQUAL 1
+#define TSDB_TS_LESS_EQUAL 2
+
+typedef struct SQueryRowCond {
+  int32_t rel;
+  TSKEY   ts;
+} SQueryRowCond;
+
+typedef void *tsdbpos_t;
 
 /**
  * Get the data block iterator, starting from position according to the query condition
@@ -232,6 +236,8 @@ int32_t tsdbRetrieveDataBlockStatisInfo(STsdbQueryHandle *pQueryHandle, SDataSta
 SArray *tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList);
 
 /**
+ *  todo remove the parameter of position, and order type
+ *
  *  Reset to the start(end) position of current query, from which the iterator starts.
  *
  * @param pQueryHandle
@@ -239,29 +245,21 @@ SArray *tsdbRetrieveDataBlock(STsdbQueryHandle *pQueryHandle, SArray *pIdList);
  * @param order ascending order or descending order
  * @return
  */
-int32_t tsdbResetQuery(STsdbQueryHandle *pQueryHandle, void *position, int16_t order);
+int32_t tsdbResetQuery(STsdbQueryHandle *pQueryHandle, STimeWindow* window, tsdbpos_t position, int16_t order);
 
 /**
  * return the access position of current query handle
  * @param pQueryHandle
  * @return
  */
-int32_t tsdbDataBlockSeek(STsdbQueryHandle *pQueryHandle, tsdbPos_t pos);
+int32_t tsdbDataBlockSeek(STsdbQueryHandle *pQueryHandle, tsdbpos_t pos);
 
 /**
  *
  * @param pQueryHandle
  * @return
  */
-tsdbPos_t tsdbDataBlockTell(STsdbQueryHandle *pQueryHandle);
-
-#define TSDB_TS_GREATER_EQUAL 1
-#define TSDB_TS_LESS_EQUAL 2
-
-typedef struct SQueryRowCond {
-  int32_t rel;
-  TSKEY   ts;
-} SQueryRowCond;
+tsdbpos_t tsdbDataBlockTell(STsdbQueryHandle *pQueryHandle);
 
 /**
  *

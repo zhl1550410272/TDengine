@@ -144,8 +144,6 @@ bool doRevisedResultsByLimit(SQInfo *pQInfo) {
 static void setExecParams(SQuery *pQuery, SQLFunctionCtx *pCtx, void *inputData, char *primaryColumnData, int32_t size,
                           int32_t functionId, SDataStatis *pStatis, bool hasNull, void *param, int32_t scanFlag);
 
-void createQueryResultInfo(SQuery *pQuery, SWindowResult *pResultRow, bool isSTableQuery, SPosInfo *posInfo);
-
 /**
  *
  * @param pQuery
@@ -154,13 +152,6 @@ void createQueryResultInfo(SQuery *pQuery, SWindowResult *pResultRow, bool isSTa
  * @return  TRUE means query not completed, FALSE means query is completed
  */
 static bool queryPausedInCurrentBlock(SQuery *pQuery, SDataBlockInfo *pDataBlockInfo, int32_t forwardStep) {
-  // current query completed
-  //  if ((pQuery->lastKey > pQuery->ekey && QUERY_IS_ASC_QUERY(pQuery)) ||
-  //      (pQuery->lastKey < pQuery->ekey && !QUERY_IS_ASC_QUERY(pQuery))) {
-  //    setQueryStatus(pQuery, QUERY_COMPLETED);
-  //    return true;
-  //  }
-
   // output buffer is full, pause current query
   if (Q_STATUS_EQUAL(pQuery->over, QUERY_RESBUF_FULL)) {
     assert((QUERY_IS_ASC_QUERY(pQuery) && forwardStep + pQuery->pos <= pDataBlockInfo->size) ||
@@ -3226,6 +3217,7 @@ typedef struct SQueryStatus {
   TSKEY         lastKey;
   STSCursor     cur;
 } SQueryStatus;
+
 // todo refactor
 static void queryStatusSave(SQueryRuntimeEnv *pRuntimeEnv, SQueryStatus *pStatus) {
   SQuery *pQuery = pRuntimeEnv->pQuery;
@@ -3265,30 +3257,23 @@ static void doSingleMeterSupplementScan(SQueryRuntimeEnv *pRuntimeEnv) {
   }
 
   dTrace("QInfo:%p start to supp scan", GET_QINFO_ADDR(pQuery));
-
   SET_SUPPLEMENT_SCAN_FLAG(pRuntimeEnv);
-
-  // usually this load operation will incur load disk block operation
-//  TSKEY endKey = loadRequiredBlockIntoMem(pRuntimeEnv, &pRuntimeEnv->endPos);
-
-//  assert((QUERY_IS_ASC_QUERY(pQuery) && endKey <= pQuery->ekey) ||
-//         (!QUERY_IS_ASC_QUERY(pQuery) && endKey >= pQuery->ekey));
 
   // close necessary function execution during supplementary scan
   disableFunctForTableSuppleScan(pRuntimeEnv, pQuery->order.order);
   queryStatusSave(pRuntimeEnv, &qStatus);
-
-  doScanAllDataBlocks(pRuntimeEnv);
-  assert(0);
   
-  // set the correct start position, and load the corresponding block in buffer if required.
-//  TSKEY actKey = loadRequiredBlockIntoMem(pRuntimeEnv, &pRuntimeEnv->startPos);
-//  assert((QUERY_IS_ASC_QUERY(pQuery) && actKey >= pQuery->skey) ||
-//         (!QUERY_IS_ASC_QUERY(pQuery) && actKey <= pQuery->skey));
-//
-//  queryStatusRestore(pRuntimeEnv, &qStatus);
-//  enableFunctForMasterScan(pRuntimeEnv, pQuery->order.order);
-//  SET_MASTER_SCAN_FLAG(pRuntimeEnv);
+  STimeWindow w = {.skey = pQuery->skey, .ekey = pQuery->ekey};
+  
+  // reverse scan from current position
+  tsdbpos_t current = tsdbDataBlockTell(pRuntimeEnv->pQueryHandle);
+  tsdbResetQuery(pRuntimeEnv->pQueryHandle, &w, current, pQuery->order.order);
+  
+  doScanAllDataBlocks(pRuntimeEnv);
+  
+  queryStatusRestore(pRuntimeEnv, &qStatus);
+  enableFunctForMasterScan(pRuntimeEnv, pQuery->order.order);
+  SET_MASTER_SCAN_FLAG(pRuntimeEnv);
 }
 
 void setQueryStatus(SQuery *pQuery, int8_t status) {
@@ -3397,12 +3382,17 @@ void vnodeScanAllData(SQueryRuntimeEnv *pRuntimeEnv) {
   
   pQuery->skey = skey;
   pQuery->ekey = pQuery->lastKey - step;
-
+  tsdbpos_t current = tsdbDataBlockTell(pRuntimeEnv->pQueryHandle);
+  
   doSingleMeterSupplementScan(pRuntimeEnv);
 
-  //   update the pQuery->skey/pQuery->ekey to limit the scan scope of sliding query during supplementary scan
+  // update the pQuery->skey and pQuery->ekey to limit the scan scope of sliding query during supplementary scan
   pQuery->lastKey = lkey;
   pQuery->ekey = ekey;
+  
+  STimeWindow win = {.skey = pQuery->skey, .ekey = pQuery->ekey};
+  tsdbResetQuery(pRuntimeEnv->pQueryHandle, &win, current, pQuery->order.order);
+  tsdbNextDataBlock(pRuntimeEnv->pQueryHandle);
 }
 
 void doFinalizeResult(SQueryRuntimeEnv *pRuntimeEnv) {
@@ -3477,17 +3467,6 @@ int64_t getNumOfResult(SQueryRuntimeEnv *pRuntimeEnv) {
   }
 
   return maxOutput;
-}
-
-static int32_t offsetComparator(const void *pLeft, const void *pRight) {
-  SMeterDataInfo **pLeft1 = (SMeterDataInfo **)pLeft;
-  SMeterDataInfo **pRight1 = (SMeterDataInfo **)pRight;
-
-  if ((*pLeft1)->offsetInHeaderFile == (*pRight1)->offsetInHeaderFile) {
-    return 0;
-  }
-
-  return ((*pLeft1)->offsetInHeaderFile > (*pRight1)->offsetInHeaderFile) ? 1 : -1;
 }
 
 SMeterQueryInfo *createMeterQueryInfo(STableQuerySupportObj *pSupporter, int32_t sid, TSKEY skey, TSKEY ekey) {
@@ -4080,7 +4059,6 @@ void vnodePrintQueryStatistics(STableQuerySupportObj *pSupporter) {
 
   double total = pSummary->fileTimeUs + pSummary->cacheTimeUs;
   double io = pSummary->loadCompInfoUs + pSummary->loadBlocksUs + pSummary->loadFieldUs;
-  //    assert(io <= pSummary->fileTimeUs);
 
   // todo add the intermediate result save cost!!
   double computing = total - io;
