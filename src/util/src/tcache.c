@@ -13,80 +13,14 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "os.h"
-
+#include "tcache.h"
 #include "hash.h"
 #include "hashutil.h"
-#include "tcache.h"
+
 #include "tlog.h"
-#include "tref.h"
 #include "ttime.h"
 #include "ttimer.h"
 #include "tutil.h"
-
-#define HASH_MAX_CAPACITY (1024 * 1024 * 16)
-#define HASH_VALUE_IN_TRASH (-1)
-#define HASH_DEFAULT_LOAD_FACTOR (0.75)
-#define HASH_INDEX(v, c) ((v) & ((c)-1))
-
-/**
- * todo: refactor to extract the hash table out of cache structure
- */
-typedef struct SCacheStatis {
-  int64_t missCount;
-  int64_t hitCount;
-  int64_t totalAccess;
-  int64_t refreshCount;
-  int32_t numOfCollision;
-} SCacheStatis;
-
-typedef struct SDataNode {
-  uint64_t addedTime;    // the added time when this element is added or updated into cache
-  uint64_t expiredTime;  // expiredTime expiredTime when this element should be remove from cache
-  uint64_t signature;
-  uint32_t size;  // allocated size for current SDataNode
-  uint16_t keySize:15;
-  bool     inTrash:1;    // denote if it is in trash or not
-  
-  T_REF_DECLARE()
-  char *key;
-  
-  char  data[];
-} SDataNode;
-
-typedef struct STrashElem {
-  struct STrashElem *prev;
-  struct STrashElem *next;
-  SDataNode *        pData;
-} STrashElem;
-
-typedef struct {
-  int64_t totalSize;  // total allocated buffer in this hash table, SCacheObj is not included.
-  int64_t refreshTime;
-
-  /*
-   * to accommodate the old datanode which has the same key value of new one in hashList
-   * when an new node is put into cache, if an existed one with the same key:
-   * 1. if the old one does not be referenced, update it.
-   * 2. otherwise, move the old one to pTrash, addedTime the new one.
-   *
-   * when the node in pTrash does not be referenced, it will be release at the expired expiredTime
-   */
-  STrashElem * pTrash;
-  void *       tmrCtrl;
-  void *       pTimer;
-  SCacheStatis statistics;
-  SHashObj *   pHashTable;
-  int          numOfElemsInTrash;  // number of element in trash
-  int16_t      deleting;           // set the deleting flag to stop refreshing ASAP.
-
-#if defined(LINUX)
-  pthread_rwlock_t lock;
-#else
-  pthread_mutex_t lock;
-#endif
-
-} SCacheObj;
 
 static FORCE_INLINE void __cache_wr_lock(SCacheObj *pObj) {
 #if defined(LINUX)
@@ -128,11 +62,10 @@ static FORCE_INLINE void __cache_lock_destroy(SCacheObj *pObj) {
 #endif
 }
 
-static void taosFreeNode(void* data) {
-  SDataNode* pNode = *(SDataNode**) data;
+static FORCE_INLINE void taosFreeNode(void *data) {
+  SCacheDataNode *pNode = *(SCacheDataNode **)data;
   free(pNode);
 }
-
 
 /**
  * @param key      key of object for hash, usually a null-terminated string
@@ -141,22 +74,23 @@ static void taosFreeNode(void* data) {
  *                 in pData. Pointer copy causes memory access error.
  * @param size     size of block
  * @param lifespan total survial expiredTime from now
- * @return         SDataNode
+ * @return         SCacheDataNode
  */
-static SDataNode *taosCreateHashNode(const char* key, size_t keyLen, const char *pData, size_t size, uint64_t duration) {
-  size_t totalSize = size + sizeof(SDataNode) + keyLen;
+static SCacheDataNode *taosCreateHashNode(const char *key, size_t keyLen, const char *pData, size_t size,
+                                          uint64_t duration) {
+  size_t totalSize = size + sizeof(SCacheDataNode) + keyLen;
 
-  SDataNode *pNewNode = calloc(1, totalSize);
+  SCacheDataNode *pNewNode = calloc(1, totalSize);
   if (pNewNode == NULL) {
     pError("failed to allocate memory, reason:%s", strerror(errno));
     return NULL;
   }
 
   memcpy(pNewNode->data, pData, size);
-  
-  pNewNode->key = (char*)pNewNode + sizeof(SDataNode) + size;
+
+  pNewNode->key = (char *)pNewNode + sizeof(SCacheDataNode) + size;
   pNewNode->keySize = keyLen;
-  
+
   memcpy(pNewNode->key, key, keyLen);
 
   pNewNode->addedTime = (uint64_t)taosGetTimestampMs();
@@ -174,7 +108,7 @@ static SDataNode *taosCreateHashNode(const char* key, size_t keyLen, const char 
  * @param pObj    Cache object
  * @param pNode   Cache slot object
  */
-static void taosAddToTrash(SCacheObj *pObj, SDataNode *pNode) {
+static void taosAddToTrash(SCacheObj *pObj, SCacheDataNode *pNode) {
   if (pNode->inTrash) { /* node is already in trash */
     return;
   }
@@ -224,7 +158,7 @@ static void taosRemoveFromTrash(SCacheObj *pObj, STrashElem *pElem) {
  * @param force   force model, if true, remove data in trash without check refcount.
  *                may cause corruption. So, forece model only applys before cache is closed
  */
-static void taosClearCacheTrash(SCacheObj *pObj, bool force) {
+static void taosTrashEmpty(SCacheObj *pObj, bool force) {
   __cache_wr_lock(pObj);
 
   if (pObj->numOfElemsInTrash == 0) {
@@ -248,8 +182,8 @@ static void taosClearCacheTrash(SCacheObj *pObj, bool force) {
     if (force || (T_REF_VAL_GET(pElem->pData) == 0)) {
       pTrace("key:%s %p removed from trash. numOfElem in trash:%d", pElem->pData->key, pElem->pData,
              pObj->numOfElemsInTrash - 1);
-      STrashElem* p = pElem;
-      
+      STrashElem *p = pElem;
+
       pElem = pElem->next;
       taosRemoveFromTrash(pObj, p);
     } else {
@@ -266,7 +200,7 @@ static void taosClearCacheTrash(SCacheObj *pObj, bool force) {
  * @param pObj      cache object
  * @param pNode     data node
  */
-static FORCE_INLINE void taosCacheReleaseNode(SCacheObj *pObj, SDataNode *pNode) {
+static FORCE_INLINE void taosCacheReleaseNode(SCacheObj *pObj, SCacheDataNode *pNode) {
   if (pNode->signature != (uint64_t)pNode) {
     pError("key:%s, %p data is invalid, or has been released", pNode->key, pNode);
     return;
@@ -274,7 +208,7 @@ static FORCE_INLINE void taosCacheReleaseNode(SCacheObj *pObj, SDataNode *pNode)
 
   taosHashRemove(pObj->pHashTable, pNode->key, pNode->keySize);
   pTrace("key:%s is removed from cache,total:%d,size:%ldbytes", pNode->key, pObj->totalSize, pObj->totalSize);
-  
+
   free(pNode);
 }
 
@@ -283,7 +217,7 @@ static FORCE_INLINE void taosCacheReleaseNode(SCacheObj *pObj, SDataNode *pNode)
  * @param pObj
  * @param pNode
  */
-static FORCE_INLINE void taosCacheMoveNodeToTrash(SCacheObj *pObj, SDataNode *pNode) {
+static FORCE_INLINE void taosCacheMoveToTrash(SCacheObj *pObj, SCacheDataNode *pNode) {
   taosHashRemove(pObj->pHashTable, pNode->key, pNode->keySize);
   taosAddToTrash(pObj, pNode);
 }
@@ -298,23 +232,23 @@ static FORCE_INLINE void taosCacheMoveNodeToTrash(SCacheObj *pObj, SDataNode *pN
  * @param dataSize
  * @return
  */
-static SDataNode *taosUpdateCacheImpl(SCacheObj *pObj, SDataNode *pNode, char *key, int32_t keyLen, void *pData,
-                                      uint32_t dataSize, uint64_t duration) {
-  SDataNode *pNewNode = NULL;
+static SCacheDataNode *taosUpdateCacheImpl(SCacheObj *pObj, SCacheDataNode *pNode, char *key, int32_t keyLen,
+                                           void *pData, uint32_t dataSize, uint64_t duration) {
+  SCacheDataNode *pNewNode = NULL;
 
   // only a node is not referenced by any other object, in-place update it
   if (T_REF_VAL_GET(pNode) == 0) {
-    size_t newSize = sizeof(SDataNode) + dataSize + keyLen;
+    size_t newSize = sizeof(SCacheDataNode) + dataSize + keyLen;
 
-    pNewNode = (SDataNode *)realloc(pNode, newSize);
+    pNewNode = (SCacheDataNode *)realloc(pNode, newSize);
     if (pNewNode == NULL) {
       return NULL;
     }
 
     pNewNode->signature = (uint64_t)pNewNode;
     memcpy(pNewNode->data, pData, dataSize);
-    
-    pNewNode->key = (char*)pNewNode + sizeof(SDataNode) + dataSize;
+
+    pNewNode->key = (char *)pNewNode + sizeof(SCacheDataNode) + dataSize;
     pNewNode->keySize = keyLen;
     memcpy(pNewNode->key, key, keyLen);
 
@@ -327,7 +261,7 @@ static SDataNode *taosUpdateCacheImpl(SCacheObj *pObj, SDataNode *pNode, char *k
     // the address of this node may be changed, so the prev and next element should update the corresponding pointer
     taosHashPut(pObj->pHashTable, key, keyLen, &pNewNode, sizeof(void *));
   } else {
-    taosCacheMoveNodeToTrash(pObj, pNode);
+    taosCacheMoveToTrash(pObj, pNode);
 
     pNewNode = taosCreateHashNode(key, keyLen, pData, dataSize, duration);
     if (pNewNode == NULL) {
@@ -353,9 +287,9 @@ static SDataNode *taosUpdateCacheImpl(SCacheObj *pObj, SDataNode *pNode, char *k
  * @param pNode
  * @return
  */
-static FORCE_INLINE SDataNode *taosAddToCacheImpl(SCacheObj *pObj, char *key, size_t keyLen, const void *pData,
-                                                  size_t dataSize, uint64_t duration) {
-  SDataNode *pNode = taosCreateHashNode(key, keyLen, pData, dataSize, duration);
+static FORCE_INLINE SCacheDataNode *taosAddToCacheImpl(SCacheObj *pObj, char *key, size_t keyLen, const void *pData,
+                                                       size_t dataSize, uint64_t duration) {
+  SCacheDataNode *pNode = taosCreateHashNode(key, keyLen, pData, dataSize, duration);
   if (pNode == NULL) {
     return NULL;
   }
@@ -363,119 +297,6 @@ static FORCE_INLINE SDataNode *taosAddToCacheImpl(SCacheObj *pObj, char *key, si
   T_REF_INC(pNode);
   taosHashPut(pObj->pHashTable, key, keyLen, &pNode, sizeof(void *));
   return pNode;
-}
-
-/**
- * addedTime data into cache
- *
- * @param handle        cache object
- * @param key           key
- * @param pData         cached data
- * @param dataSize      data size
- * @param duration      survival expiredTime in second
- * @return              cached element
- */
-void *taosAddDataIntoCache(void *handle, char *key, char *pData, int dataSize, int duration) {
-  SDataNode *pNode;
-  SCacheObj *pObj;
-
-  pObj = (SCacheObj *)handle;
-  if (pObj == NULL || pObj->pHashTable == NULL) {
-    return NULL;
-  }
-
-  size_t keyLen = strlen(key);
-
-  __cache_wr_lock(pObj);
-  SDataNode **pt = (SDataNode**) taosHashGet(pObj->pHashTable, key, keyLen);
-  SDataNode* pOld = (pt != NULL)? (*pt):NULL;
-  
-  if (pOld == NULL) {  // do addedTime to cache
-    pNode = taosAddToCacheImpl(pObj, key, keyLen, pData, dataSize, duration * 1000L);
-    if (NULL != pNode) {
-      pTrace("key:%s %p added into cache, addedTime:%" PRIu64 ", expireTime:%" PRIu64 ", cache total:%d, size:%" PRId64
-             " bytes, collision:%d",
-             key, pNode, pNode->addedTime, pNode->expiredTime, dataSize, pObj->totalSize,
-             pObj->statistics.numOfCollision);
-    }
-  } else {  // old data exists, update the node
-    pNode = taosUpdateCacheImpl(pObj, pOld, key, keyLen, pData, dataSize, duration * 1000L);
-    pTrace("key:%s %p exist in cache, updated", key, pNode);
-  }
-
-  __cache_unlock(pObj);
-
-  return (pNode != NULL) ? pNode->data : NULL;
-}
-
-/**
- * remove data in cache, the data will not be removed immediately.
- * if it is referenced by other object, it will be remain in cache
- * @param handle
- * @param data
- */
-void taosRemoveDataFromCache(void *handle, void **data, bool _remove) {
-  SCacheObj *pObj = (SCacheObj *)handle;
-  if (pObj == NULL || (*data) == NULL || (taosHashGetSize(pObj->pHashTable) + pObj->numOfElemsInTrash == 0)) {
-    return;
-  }
-
-  size_t     offset = offsetof(SDataNode, data);
-  SDataNode *pNode = (SDataNode *)((char *)(*data) - offset);
-
-  if (pNode->signature != (uint64_t)pNode) {
-    pError("key: %p release invalid cache data", pNode);
-    return;
-  }
-
-  *data = NULL;
-
-  if (_remove) {
-    __cache_wr_lock(pObj);
-    // pNode may be released immediately by other thread after the reference count of pNode is set to 0,
-    // So we need to lock it in the first place.
-    T_REF_DEC(pNode);
-    taosCacheMoveNodeToTrash(pObj, pNode);
-
-    __cache_unlock(pObj);
-  } else {
-    T_REF_DEC(pNode);
-  }
-}
-
-/**
- * get data from cache
- * @param handle        cache object
- * @param key           key
- * @return              cached data or NULL
- */
-void *taosGetDataFromCache(void *handle, char *key) {
-  SCacheObj *pObj = (SCacheObj *)handle;
-  if (pObj == NULL || taosHashGetSize(pObj->pHashTable) == 0) {
-    return NULL;
-  }
-
-  uint32_t keyLen = (uint32_t)strlen(key);
-
-  __cache_rd_lock(pObj);
-
-  SDataNode **ptNode = (SDataNode **)taosHashGet(pObj->pHashTable, key, keyLen);
-  if (ptNode != NULL) {
-    T_REF_INC(*ptNode);
-  }
-  
-  __cache_unlock(pObj);
-
-  if (ptNode != NULL) {
-    atomic_add_fetch_32(&pObj->statistics.hitCount, 1);
-    pTrace("key:%s is retrieved from cache,refcnt:%d", key, T_REF_VAL_GET(*ptNode));
-  } else {
-    atomic_add_fetch_32(&pObj->statistics.missCount, 1);
-    pTrace("key:%s not in cache,retrieved failed", key);
-  }
-
-  atomic_add_fetch_32(&pObj->statistics.totalAccess, 1);
-  return ((*ptNode) != NULL) ? (*ptNode)->data : NULL;
 }
 
 static void doCleanupDataCache(SCacheObj *pObj) {
@@ -487,7 +308,7 @@ static void doCleanupDataCache(SCacheObj *pObj) {
 
   __cache_unlock(pObj);
 
-  taosClearCacheTrash(pObj, true);
+  taosTrashEmpty(pObj, true);
   __cache_lock_destroy(pObj);
 
   memset(pObj, 0, sizeof(SCacheObj));
@@ -498,7 +319,7 @@ static void doCleanupDataCache(SCacheObj *pObj) {
  * refresh cache to remove data in both hash list and trash, if any nodes' refcount == 0, every pObj->refreshTime
  * @param handle   Cache object handle
  */
-void taosRefreshDataCache(void *handle, void *tmrId) {
+static void taosCacheRefresh(void *handle, void *tmrId) {
   SCacheObj *pObj = (SCacheObj *)handle;
 
   if (pObj == NULL || taosHashGetSize(pObj->pHashTable) == 0) {
@@ -513,65 +334,35 @@ void taosRefreshDataCache(void *handle, void *tmrId) {
 
   uint64_t expiredTime = taosGetTimestampMs();
   pObj->statistics.refreshCount++;
-  
-  SHashMutableIterator* pIter = taosHashCreateIter(pObj->pHashTable);
-  
+
+  SHashMutableIterator *pIter = taosHashCreateIter(pObj->pHashTable);
+
   __cache_wr_lock(pObj);
-  while(taosHashIterNext(pIter)) {
-    
+  while (taosHashIterNext(pIter)) {
     if (pObj->deleting == 1) {
       taosHashDestroyIter(pIter);
       break;
     }
-    
-    SDataNode* pNode = *(SDataNode**) taosHashIterGet(pIter);
+
+    SCacheDataNode *pNode = *(SCacheDataNode **)taosHashIterGet(pIter);
     if (pNode->expiredTime <= expiredTime && T_REF_VAL_GET(pNode) <= 0) {
       taosCacheReleaseNode(pObj, pNode);
     }
   }
-  
+
   __cache_unlock(pObj);
-  
+
   taosHashDestroyIter(pIter);
 
   if (pObj->deleting == 1) {  // clean up resources and abort
     doCleanupDataCache(pObj);
   } else {
-    taosClearCacheTrash(pObj, false);
-    taosTmrReset(taosRefreshDataCache, pObj->refreshTime, pObj, pObj->tmrCtrl, &pObj->pTimer);
+    taosTrashEmpty(pObj, false);
+    taosTmrReset(taosCacheRefresh, pObj->refreshTime, pObj, pObj->tmrCtrl, &pObj->pTimer);
   }
 }
 
-void taosClearDataCache(void *handle) {
-  SCacheObj *pObj = (SCacheObj *)handle;
-  
-  SHashMutableIterator* pIter = taosHashCreateIter(pObj->pHashTable);
-  
-  __cache_wr_lock(pObj);
-  while(taosHashIterNext(pIter)) {
-    
-    if (pObj->deleting == 1) {
-      taosHashDestroyIter(pIter);
-      break;
-    }
-    
-    SDataNode* pNode = *(SDataNode**) taosHashIterGet(pIter);
-    taosCacheMoveNodeToTrash(pObj, pNode);
-  }
-  __cache_unlock(pObj);
-  
-  taosHashDestroyIter(pIter);
-  taosClearCacheTrash(pObj, false);
-}
-
-/**
- * @param capacity          maximum slots available for hash elements
- * @param tmrCtrl           timer ctrl
- * @param refreshTime       refresh operation interval expiredTime, the maximum survival expiredTime when one element is
- * expired and not referenced by other objects
- * @return
- */
-void *taosInitDataCache(void *tmrCtrl, int64_t refreshTime) {
+SCacheObj *taosCacheInit(void *tmrCtrl, int64_t refreshTime) {
   if (tmrCtrl == NULL || refreshTime <= 0) {
     return NULL;
   }
@@ -588,14 +379,14 @@ void *taosInitDataCache(void *tmrCtrl, int64_t refreshTime) {
     pError("failed to allocate memory, reason:%s", strerror(errno));
     return NULL;
   }
-  
+
   // set free cache node callback function for hash table
   taosHashSetFreecb(pObj->pHashTable, taosFreeNode);
 
   pObj->refreshTime = refreshTime * 1000;
   pObj->tmrCtrl = tmrCtrl;
 
-  taosTmrReset(taosRefreshDataCache, pObj->refreshTime, pObj, pObj->tmrCtrl, &pObj->pTimer);
+  taosTmrReset(taosCacheRefresh, pObj->refreshTime, pObj, pObj->tmrCtrl, &pObj->pTimer);
 
   if (__cache_lock_init(pObj) != 0) {
     taosTmrStopA(&pObj->pTimer);
@@ -606,35 +397,77 @@ void *taosInitDataCache(void *tmrCtrl, int64_t refreshTime) {
     return NULL;
   }
 
-  return (void *)pObj;
+  return pObj;
 }
 
-/**
- * release all allocated memory and destroy the cache object.
- *
- * This function only set the deleting flag, and the specific work of clean up cache is delegated to
- * taosRefreshDataCache function, which will executed every SCacheObj->refreshTime sec.
- *
- * If the value of SCacheObj->refreshTime is too large, the taosRefreshDataCache function may not be invoked
- * before the main thread terminated, in which case all allocated resources are simply recycled by OS.
- *
- * @param handle
- */
-void taosCleanupDataCache(void *handle) {
-  SCacheObj *pObj = (SCacheObj *)handle;
-  if (pObj == NULL) {
-    return;
+void *taosCachePut(void *handle, char *key, char *pData, int dataSize, int duration) {
+  SCacheDataNode *pNode;
+  SCacheObj *     pObj;
+  
+  pObj = (SCacheObj *)handle;
+  if (pObj == NULL || pObj->pHashTable == NULL) {
+    return NULL;
   }
-
-  pObj->deleting = 1;
+  
+  size_t keyLen = strlen(key);
+  
+  __cache_wr_lock(pObj);
+  SCacheDataNode **pt = (SCacheDataNode **)taosHashGet(pObj->pHashTable, key, keyLen);
+  SCacheDataNode * pOld = (pt != NULL) ? (*pt) : NULL;
+  
+  if (pOld == NULL) {  // do addedTime to cache
+    pNode = taosAddToCacheImpl(pObj, key, keyLen, pData, dataSize, duration * 1000L);
+    if (NULL != pNode) {
+      pTrace("key:%s %p added into cache, addedTime:%" PRIu64 ", expireTime:%" PRIu64 ", cache total:%d, size:%" PRId64
+                 " bytes, collision:%d",
+             key, pNode, pNode->addedTime, pNode->expiredTime, dataSize, pObj->totalSize,
+             pObj->statistics.numOfCollision);
+    }
+  } else {  // old data exists, update the node
+    pNode = taosUpdateCacheImpl(pObj, pOld, key, keyLen, pData, dataSize, duration * 1000L);
+    pTrace("key:%s %p exist in cache, updated", key, pNode);
+  }
+  
+  __cache_unlock(pObj);
+  
+  return (pNode != NULL) ? pNode->data : NULL;
 }
 
-void *taosGetDataFromExists(void *handle, void *data) {
+void *taosCacheAcquireByName(void *handle, char *key) {
+  SCacheObj *pObj = (SCacheObj *)handle;
+  if (pObj == NULL || taosHashGetSize(pObj->pHashTable) == 0) {
+    return NULL;
+  }
+  
+  uint32_t keyLen = (uint32_t)strlen(key);
+  
+  __cache_rd_lock(pObj);
+  
+  SCacheDataNode **ptNode = (SCacheDataNode **)taosHashGet(pObj->pHashTable, key, keyLen);
+  if (ptNode != NULL) {
+    T_REF_INC(*ptNode);
+  }
+  
+  __cache_unlock(pObj);
+  
+  if (ptNode != NULL) {
+    atomic_add_fetch_32(&pObj->statistics.hitCount, 1);
+    pTrace("key:%s is retrieved from cache,refcnt:%d", key, T_REF_VAL_GET(*ptNode));
+  } else {
+    atomic_add_fetch_32(&pObj->statistics.missCount, 1);
+    pTrace("key:%s not in cache,retrieved failed", key);
+  }
+  
+  atomic_add_fetch_32(&pObj->statistics.totalAccess, 1);
+  return (ptNode != NULL) ? (*ptNode)->data : NULL;
+}
+
+void *taosCacheAcquireByData(void *handle, void *data) {
   SCacheObj *pObj = (SCacheObj *)handle;
   if (pObj == NULL || data == NULL) return NULL;
 
-  size_t     offset = offsetof(SDataNode, data);
-  SDataNode *ptNode = (SDataNode *)((char *)data - offset);
+  size_t          offset = offsetof(SCacheDataNode, data);
+  SCacheDataNode *ptNode = (SCacheDataNode *)((char *)data - offset);
 
   if (ptNode->signature != (uint64_t)ptNode) {
     pError("key: %p the data from cache is invalid", ptNode);
@@ -649,12 +482,12 @@ void *taosGetDataFromExists(void *handle, void *data) {
   return data;
 }
 
-void *taosTransferDataInCache(void *handle, void **data) {
+void *taosCacheTransfer(void *handle, void **data) {
   SCacheObj *pObj = (SCacheObj *)handle;
   if (pObj == NULL || data == NULL) return NULL;
 
-  size_t     offset = offsetof(SDataNode, data);
-  SDataNode *ptNode = (SDataNode *)((char *)(*data) - offset);
+  size_t          offset = offsetof(SCacheDataNode, data);
+  SCacheDataNode *ptNode = (SCacheDataNode *)((char *)(*data) - offset);
 
   if (ptNode->signature != (uint64_t)ptNode) {
     pError("key: %p the data from cache is invalid", ptNode);
@@ -669,4 +502,61 @@ void *taosTransferDataInCache(void *handle, void **data) {
   *data = NULL;
 
   return d;
+}
+
+void taosCacheRelease(void *handle, void **data, bool _remove) {
+  SCacheObj *pObj = (SCacheObj *)handle;
+  if (pObj == NULL || (*data) == NULL || (taosHashGetSize(pObj->pHashTable) + pObj->numOfElemsInTrash == 0)) {
+    return;
+  }
+  
+  size_t offset = offsetof(SCacheDataNode, data);
+  
+  SCacheDataNode *pNode = (SCacheDataNode *)((char *)(*data) - offset);
+  
+  if (pNode->signature != (uint64_t)pNode) {
+    pError("key: %p release invalid cache data", pNode);
+    return;
+  }
+  
+  *data = NULL;
+  
+  if (_remove) {
+    __cache_wr_lock(pObj);
+    // pNode may be released immediately by other thread after the reference count of pNode is set to 0,
+    // So we need to lock it in the first place.
+    T_REF_DEC(pNode);
+    taosCacheMoveToTrash(pObj, pNode);
+    
+    __cache_unlock(pObj);
+  } else {
+    T_REF_DEC(pNode);
+  }
+}
+
+void taosCacheEmpty(SCacheObj *pCacheObj) {
+  SHashMutableIterator *pIter = taosHashCreateIter(pCacheObj->pHashTable);
+  
+  __cache_wr_lock(pCacheObj);
+  while (taosHashIterNext(pIter)) {
+    if (pCacheObj->deleting == 1) {
+      taosHashDestroyIter(pIter);
+      break;
+    }
+    
+    SCacheDataNode *pNode = *(SCacheDataNode **)taosHashIterGet(pIter);
+    taosCacheMoveToTrash(pCacheObj, pNode);
+  }
+  __cache_unlock(pCacheObj);
+  
+  taosHashDestroyIter(pIter);
+  taosTrashEmpty(pCacheObj, false);
+}
+
+void taosCacheCleanup(SCacheObj *pCacheObj) {
+  if (pCacheObj == NULL) {
+    return;
+  }
+  
+  pCacheObj->deleting = 1;
 }
