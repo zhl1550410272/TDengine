@@ -151,6 +151,7 @@ static void taosRemoveFromTrash(SCacheObj *pObj, STrashElem *pElem) {
   free(pElem->pData);
   free(pElem);
 }
+
 /**
  * remove nodes in trash with refCount == 0 in cache
  * @param pNode
