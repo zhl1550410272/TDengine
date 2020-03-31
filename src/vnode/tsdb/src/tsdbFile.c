@@ -200,6 +200,12 @@ int tsdbLoadDataBlock(SFile *pFile, SCompBlock *pStartBlock, int numOfBlocks, SD
   return 0;
 }
 
+// colId is the column id list, the number of colId is numOfCols
+int tsdbLoadDataBlockById(SFile *pFile, SCompBlock *pStartBlock, int numOfBlocks, int32_t* colId, int32_t numOfCols,
+    SDataCols *pCols, SCompData *pCompData) {
+  
+}
+
 int tsdbCopyBlockDataInFile(SFile *pOutFile, SFile *pInFile, SCompInfo *pCompInfo, int idx, int isLast, SDataCols *pCols) {
   SCompBlock *pSuperBlock = TSDB_COMPBLOCK_AT(pCompInfo, idx);
   SCompBlock *pStartBlock = NULL;

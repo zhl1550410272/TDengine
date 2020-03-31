@@ -5461,7 +5461,7 @@ static int32_t buildAirthmeticExprFromMsg(SSqlFunctionExpr *pExpr, SQueryTableMs
   SSqlBinaryExprInfo *pBinaryExprInfo = &pExpr->binExprInfo;
   SColumnInfo *       pColMsg = pQueryMsg->colList;
 #if 0
-  tSQLBinaryExpr* pBinExpr = NULL;
+  tSQLSyntaxNode* pBinExpr = NULL;
   SSchema*        pSchema = toSchema(pQueryMsg, pColMsg, pQueryMsg->numOfCols);
   
   dTrace("qmsg:%p create binary expr from string:%s", pQueryMsg, pExpr->pBase.arg[0].argValue.pz);

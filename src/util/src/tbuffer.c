@@ -30,7 +30,7 @@
     tbufWriteAt(buf, pos, &data, sizeof(data));\
   }
 
-#include "../inc/tbuffer.h"
+#include "tbuffer.h"
 
 
 ////////////////////////////////////////////////////////////////////////////////

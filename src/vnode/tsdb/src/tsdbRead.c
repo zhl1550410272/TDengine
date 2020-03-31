@@ -86,8 +86,8 @@ typedef struct STableCheckInfo {
 //  int32_t     numOfBlocks;
   int32_t     start;
   bool        checkFirstFileBlock;
-  
   SCompIdx*   compIndex;
+  SFileGroupIter fileIter;
   
   SCompBlock *pBlock;
   SSkipListIterator* iter;
@@ -293,6 +293,8 @@ tsdb_query_handle_t *tsdbQueryByTableId(tsdb_repo_t* tsdb, STsdbQueryCond *pCond
       .lastKey = pQueryHandle->window.skey,
       .tableId = id,
       .pTableObj = tsdbGetTableByUid(tsdbGetMeta(tsdb), id.uid),  //todo this may be failed
+      .compIndex = calloc(10000, sizeof(SCompIdx)),
+      .pBlock = calloc(1, 1024),
     };
     
     taosArrayPush(pQueryHandle->pTableCheckInfo, &info);
@@ -357,6 +359,11 @@ static int32_t getFileIdFromKey(TSKEY key) {
 }
 
 static int32_t getFileCompInfo(STableCheckInfo* pCheckInfo, SFileGroup* fileGroup) {
+  // check open file failed
+  if (fileGroup->files[TSDB_FILE_TYPE_HEAD].fd == FD_INITIALIZER) {
+    fileGroup->files[TSDB_FILE_TYPE_HEAD].fd = open(fileGroup->files[TSDB_FILE_TYPE_HEAD].fname, O_RDONLY);
+  }
+  
   tsdbLoadCompIdx(fileGroup, pCheckInfo->compIndex, 10000); // todo set dynamic max tables
   SCompIdx* compIndex = &pCheckInfo->compIndex[pCheckInfo->tableId.tid];
   
@@ -523,7 +530,7 @@ int vnodeBinarySearchKey(char *pValue, int num, TSKEY key, int order) {
   return midPos;
 }
 
-static void filterDataInDataBlock(STsdbQueryHandle *pQueryHandle, SArray *sa) {
+static void filterDataInDataBlock(STsdbQueryHandle *pQueryHandle, SDataCols* pCols, SArray *sa) {
   // only return the qualified data to client in terms of query time window, data rows in the same block but do not
   // be included in the query time window will be discarded
   SQueryFilePos *cur = &pQueryHandle->cur;
@@ -587,10 +594,9 @@ static bool getQualifiedDataBlock(STsdbQueryHandle *pQueryHandle, STableCheckInf
   STsdbFileH* pFileHandle = tsdbGetFile(pQueryHandle->pTsdb);
   int32_t fid = getFileIdFromKey(pCheckInfo->lastKey);
   
-  SFileGroup* fileGroup = tsdbSearchFGroup(pFileHandle, fid);
-  if (fileGroup == NULL) {
-    return false;
-  }
+  tsdbInitFileGroupIter(pFileHandle, &pCheckInfo->fileIter, TSDB_FGROUP_ITER_FORWARD);
+  tsdbSeekFileGroupIter(&pCheckInfo->fileIter, fid);
+  SFileGroup* fgroup = tsdbGetFileGroupNext(&pCheckInfo->fileIter);
   
   SQueryFilePos* cur = &pQueryHandle->cur;
 
@@ -598,12 +604,13 @@ static bool getQualifiedDataBlock(STsdbQueryHandle *pQueryHandle, STableCheckInf
   int32_t index = -1;
 
   // todo add iterator for filegroup
+  int32_t tid = pCheckInfo->tableId.tid;
+  
   while (1) {
-    if ((fid = getFileCompInfo(pCheckInfo, fileGroup)) < 0) {
+    if ((fid = getFileCompInfo(pCheckInfo, fgroup)) < 0) {
       break;
     }
     
-    int32_t tid = pCheckInfo->tableId.tid;
     index = binarySearchForBlockImpl(pCheckInfo->pBlock, pCheckInfo->compIndex[tid].numOfSuperBlocks, pQueryHandle->order, key);
     
     if (type == QUERY_RANGE_GREATER_EQUAL) {
@@ -626,7 +633,7 @@ static bool getQualifiedDataBlock(STsdbQueryHandle *pQueryHandle, STableCheckInf
     return false;
   }
   
-  assert(index >= 0 && index < pQueryHandle->numOfBlocks);
+  assert(index >= 0 && index < pCheckInfo->compIndex[tid].numOfSuperBlocks);
   
   // load first data block into memory failed, caused by disk block error
   bool    blockLoaded = false;
@@ -636,9 +643,11 @@ static bool getQualifiedDataBlock(STsdbQueryHandle *pQueryHandle, STableCheckInf
   cur->slot = index;
   
 //    sa = getDefaultLoadColumns(pQueryHandle, true);
-    if (tsdbLoadDataBlock(&fileGroup->files[2], &pCheckInfo->pBlock[cur->slot], 1, fid, sa) == 0) {
-      blockLoaded = true;
-    }
+  SDataCols cols[2] = {0};
+  SCompData data[2] = {0};
+  if (tsdbLoadDataBlock(&fgroup->files[2], &pCheckInfo->pBlock[cur->slot], 1, cols, data) == 0) {
+    blockLoaded = true;
+  }
     
     //    dError("QInfo:%p fileId:%d total numOfBlks:%d blockId:%d load into memory failed due to error in disk files",
     //           GET_QINFO_ADDR(pQuery), pQuery->fileId, pQuery->numOfBlocks, blkIdx);
@@ -652,7 +661,7 @@ static bool getQualifiedDataBlock(STsdbQueryHandle *pQueryHandle, STableCheckInf
 //  cur->pos = binarySearchForBlockImpl(ptsBuf->data, pBlocks->numOfPoints, key, pQueryHandle->order);
   assert(cur->pos >= 0 && cur->fid >= 0 && cur->slot >= 0);
   
-  filterDataInDataBlock(pQueryHandle, sa);
+  filterDataInDataBlock(pQueryHandle, cols, sa);
   return pQueryHandle->realNumOfRows > 0;
 }
 
@@ -1011,19 +1020,20 @@ static void getTagColumnInfo(SSyntaxTreeFilterSupporter* pSupporter, SSchema* pS
 }
 
 void filterPrepare(void* expr, void* param) {
-  tSQLBinaryExpr *pExpr = (tSQLBinaryExpr*) expr;
-  if (pExpr->info != NULL) {
+  tSQLSyntaxNode *pExpr = (tSQLSyntaxNode*) expr;
+  if (pExpr->_node.info != NULL) {
     return;
   }
   
   int32_t i = 0, offset = 0;
-  pExpr->info = calloc(1, sizeof(tQueryInfo));
+  pExpr->_node.info = calloc(1, sizeof(tQueryInfo));
   
-  tQueryInfo*                 pInfo = pExpr->info;
+  tQueryInfo* pInfo = pExpr->_node.info;
+  
   SSyntaxTreeFilterSupporter* pSupporter = (SSyntaxTreeFilterSupporter*)param;
   
-  tVariant* pCond = pExpr->pRight->pVal;
-  SSchema*  pSchema = pExpr->pLeft->pSchema;
+  tVariant* pCond = pExpr->_node.pRight->pVal;
+  SSchema*  pSchema = pExpr->_node.pLeft->pSchema;
   
   getTagColumnInfo(pSupporter, pSchema, &i, &offset);
   assert((i >= 0 && i < TSDB_MAX_TAGS) || (i == TSDB_TBNAME_COLUMN_INDEX));
@@ -1031,7 +1041,7 @@ void filterPrepare(void* expr, void* param) {
   
   pInfo->sch = *pSchema;
   pInfo->colIdx = i;
-  pInfo->optr = pExpr->nSQLBinaryOptr;
+  pInfo->optr = pExpr->_node.optr;
   pInfo->offset = offset;
   pInfo->compare = getFilterComparator(pSchema->type, pCond->nType, pInfo->optr);
   
@@ -1089,7 +1099,7 @@ bool tSkipListNodeFilterCallback(const void* pNode, void* param) {
 static int32_t doQueryTableList(STable* pSTable, SArray* pRes, const char* pCond) {
   STColumn* stcol = schemaColAt(pSTable->tagSchema, 0);
   
-  tSQLBinaryExpr* pExpr = NULL;
+  tSQLSyntaxNode* pExpr = NULL;
   tSQLBinaryExprFromString(&pExpr, stcol, schemaNCols(pSTable->tagSchema), pCond, strlen(pCond));
   
   // failed to build expression, no result, return immediately
