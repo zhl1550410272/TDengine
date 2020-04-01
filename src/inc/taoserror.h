@@ -80,7 +80,7 @@ TAOS_DEFINE_ERROR(TSDB_CODE_TABLE_ALREADY_EXIST,        0, 34, "table already ex
 TAOS_DEFINE_ERROR(TSDB_CODE_INVALID_USER,               0, 35, "invalid user")
 TAOS_DEFINE_ERROR(TSDB_CODE_INVALID_ACCT,               0, 36, "invalid account")
 TAOS_DEFINE_ERROR(TSDB_CODE_INVALID_PASS,               0, 37, "invalid password")
-TAOS_DEFINE_ERROR(TSDB_CODE_DB_NOT_SELECTED,            0, 38, "do not selected")
+TAOS_DEFINE_ERROR(TSDB_CODE_DB_NOT_SELECTED,            0, 38, "db not selected")
 TAOS_DEFINE_ERROR(TSDB_CODE_MEMORY_CORRUPTED,           0, 39, "memory corrupted")
 TAOS_DEFINE_ERROR(TSDB_CODE_USER_ALREADY_EXIST,         0, 40, "user already exist")
 TAOS_DEFINE_ERROR(TSDB_CODE_NO_RIGHTS,                  0, 41, "no rights")

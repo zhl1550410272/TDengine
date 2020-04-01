@@ -890,19 +890,11 @@ static bool hasAdditionalErrorInfo(int32_t code, SSqlCmd *pCmd) {
 
 char *taos_errstr(TAOS *taos) {
   STscObj *pObj = (STscObj *)taos;
-  uint8_t  code;
 
   if (pObj == NULL || pObj->signature != pObj)
     return (char*)tstrerror(globalCode);
 
   SSqlObj *pSql = pObj->pSql;
-
-//  if (validErrorCode(pSql->res.code)) {
-//    code = pSql->res.code;
-//  } else {
-//    code = TSDB_CODE_OTHERS;  // unknown error
-//  }
-
   if (hasAdditionalErrorInfo(pSql->res.code, &pSql->cmd)) {
     return pSql->cmd.payload;
   } else {
