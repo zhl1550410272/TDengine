@@ -118,7 +118,7 @@ TAOS_DEFINE_ERROR(TSDB_CODE_MONITOR_DB_FORBIDDEN,       0, 72, "monitor db forbi
 TAOS_DEFINE_ERROR(TSDB_CODE_NO_DISK_PERMISSIONS,        0, 73, "no disk permissions")
 TAOS_DEFINE_ERROR(TSDB_CODE_VG_INIT_FAILED,             0, 74, "vg init failed")
 TAOS_DEFINE_ERROR(TSDB_CODE_DATA_ALREADY_IMPORTED,      0, 75, "data already imported")
-TAOS_DEFINE_ERROR(TSDB_CODE_OPS_NOT_SUPPORT,            0, 76, "ops not support")
+TAOS_DEFINE_ERROR(TSDB_CODE_OPS_NOT_SUPPORT,            0, 76, "operations not support")
 TAOS_DEFINE_ERROR(TSDB_CODE_INVALID_QUERY_ID,           0, 77, "invalid query id")
 TAOS_DEFINE_ERROR(TSDB_CODE_INVALID_STREAM_ID,          0, 78, "invalid stream id")
 TAOS_DEFINE_ERROR(TSDB_CODE_INVALID_CONNECTION,         0, 79, "invalid connection")
