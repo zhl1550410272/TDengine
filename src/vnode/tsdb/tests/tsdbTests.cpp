@@ -12,6 +12,7 @@ double getCurTime() {
 }
 
 TEST(TsdbTest, DISABLED_tableEncodeDecode) {
+// TEST(TsdbTest, tableEncodeDecode) {
   STable *pTable = (STable *)malloc(sizeof(STable));
 
   pTable->type = TSDB_NORMAL_TABLE;
@@ -153,9 +154,23 @@ TEST(TsdbTest, openRepo) {
   SCompIdx *pIdx = (SCompIdx *)calloc(pRepo->config.maxTables, sizeof(SCompIdx));
   tsdbLoadCompIdx(pGroup, (void *)pIdx, pRepo->config.maxTables);
 
-  SCompInfo *pCompInfo = (SCompInfo *)malloc(sizeof(SCompInfo) + pIdx[0].len);
+  SCompInfo *pCompInfo = (SCompInfo *)malloc(sizeof(SCompInfo) + pIdx[1].len);
 
-  tsdbLoadCompBlocks(pGroup, pIdx, (void *)pCompInfo);
+  tsdbLoadCompBlocks(pGroup, &pIdx[0], (void *)pCompInfo);
+
+  int blockIdx = 0;
+  SCompBlock *pBlock = &(pCompInfo->blocks[blockIdx]);
+
+  SCompData *pCompData = (SCompData *)malloc(sizeof(SCompData) + sizeof(SCompCol) * pBlock->numOfCols);
+
+  tsdbLoadCompCols(&pGroup->files[TSDB_FILE_TYPE_DATA], pBlock, (void *)pCompData);
+
+  STable *pTable = tsdbGetTableByUid(pRepo->tsdbMeta, pCompData->uid);
+  SDataCols *pDataCols = tdNewDataCols(tdMaxRowBytesFromSchema(pTable->schema), 5, 10);
+  tdInitDataCols(pDataCols, pTable->schema);
+
+  tsdbLoadDataBlock(&pGroup->files[TSDB_FILE_TYPE_DATA], pBlock, 1, pDataCols, pCompData);
+
 
   int k = 0;
 

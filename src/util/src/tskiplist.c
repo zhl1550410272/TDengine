@@ -448,19 +448,13 @@ void tSkipListDoInsert(SSkipList *pSkipList, SSkipListNode **forward, SSkipListN
   for (int32_t i = 0; i < pNode->level; ++i) {
     SSkipListNode *x = forward[i];
     
-//    if (x != pSkipList->pTail) {
-      SL_GET_BACKWARD_POINTER(pNode, i) = x;
+    SL_GET_BACKWARD_POINTER(pNode, i) = x;
 
-      SSkipListNode *next = SL_GET_FORWARD_POINTER(x, i);
-//      if (next) {
-        SL_GET_BACKWARD_POINTER(next, i) = pNode;
-//      }
+    SSkipListNode *next = SL_GET_FORWARD_POINTER(x, i);
+    SL_GET_BACKWARD_POINTER(next, i) = pNode;
 
-      SL_GET_FORWARD_POINTER(pNode, i) = next;
-      SL_GET_FORWARD_POINTER(x, i) = pNode;
-//    } else {
-//      SL_GET_FORWARD_POINTER(pSkipList->pHead, i) = pNode;
-//    }
+    SL_GET_FORWARD_POINTER(pNode, i) = next;
+    SL_GET_FORWARD_POINTER(x, i) = pNode;
   }
   
   atomic_add_fetch_32(&pSkipList->size, 1);
@@ -470,7 +464,6 @@ void tSkipListDoInsert(SSkipList *pSkipList, SSkipListNode **forward, SSkipListN
 }
 
 SSkipListNode* tSkipListDoAppend(SSkipList *pSkipList, SSkipListNode *pNode) {
-  // do clear pointer area
   DO_MEMSET_PTR_AREA(pNode);
   
   for(int32_t i = 0; i < pNode->level; ++i) {
@@ -600,7 +593,7 @@ bool tSkipListIterNext(SSkipListIterator *iter) {
   return iter->cur != pSkipList->pTail;
 }
 
-SSkipListNode *tSkipListIterGet(SSkipListIterator *iter) { 
+SSkipListNode *tSkipListIterGet(SSkipListIterator *iter) {
   if (iter == NULL || iter->cur == iter->pSkipList->pTail) {
      return NULL;
   } else {

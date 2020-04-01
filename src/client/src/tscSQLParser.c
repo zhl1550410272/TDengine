@@ -1213,7 +1213,7 @@ int32_t parseSelectClause(SSqlCmd* pCmd, int32_t clauseIndex, tSQLExprList* pSel
           
           int32_t ret = tSQLBinaryExprCreateFromSqlExpr(&pNode, pItem->pNode, &pBinExprInfo->numOfCols, &pColIndex, &pQueryInfo->exprsInfo);
           if (ret != TSDB_CODE_SUCCESS) {
-            tSQLBinaryExprDestroy(pNode, NULL);
+            tSQLBinaryExprDestroy(&pNode, NULL);
             return invalidSqlErrMsg(pQueryInfo->msg, "invalid expression in select clause");
           }
           
@@ -5855,19 +5855,16 @@ static int32_t tSQLBinaryExprCreateFromSqlExpr(tSQLSyntaxNode **pExpr, tSQLExpr*
     
     strncpy((*pColIndex)[(*num) - 1].name, pAst->operand.z, pAst->operand.n);
   } else {
-    tSQLSyntaxNode *pBinExpr = (tSQLSyntaxNode *)calloc(1, sizeof(tSQLSyntaxNode));
-    pBinExpr->_node.optr = false;
-    pBinExpr->_node.pLeft = pLeft;
-    pBinExpr->_node.pRight = pRight;
-    
+    *pExpr = (tSQLSyntaxNode *)calloc(1, sizeof(tSQLSyntaxNode));
+    (*pExpr)->_node.hasPK = false;
+    (*pExpr)->_node.pLeft = pLeft;
+    (*pExpr)->_node.pRight = pRight;
     SSQLToken t = {.type = pAst->nSQLOptr};
-    pBinExpr->_node.optr = getBinaryExprOptr(&t);
+    (*pExpr)->_node.optr = getBinaryExprOptr(&t);
   
-    assert(pBinExpr->_node.optr != 0);
+    assert((*pExpr)->_node.optr != 0);
     
-    pBinExpr->nodeType = TSQL_NODE_EXPR;
-  
-    if (pBinExpr->_node.optr == TSDB_BINARY_OP_DIVIDE) {
+    if ((*pExpr)->_node.optr == TSDB_BINARY_OP_DIVIDE) {
       if (pRight->nodeType == TSQL_NODE_VALUE) {
         if (pRight->pVal->nType == TSDB_DATA_TYPE_INT && pRight->pVal->i64Key == 0) {
           return TSDB_CODE_INVALID_SQL;

@@ -134,10 +134,8 @@ static tSQLSyntaxNode *tSQLSyntaxNodeCreate(SSchema *pSchema, int32_t numOfCols,
     pNode->nodeType = TSQL_NODE_COL;
 
     if (pToken->type == TK_ID) {
-      pNode->pSchema->colId = (int16_t)pSchema[i].colId;
       memcpy(pNode->pSchema, &pSchema[i], sizeof(SSchema));
     } else {
-      pNode->pSchema->colId = -1;
       pNode->pSchema->type = TSDB_DATA_TYPE_BINARY;
       pNode->pSchema->bytes = TSDB_TABLE_NAME_LEN;
       strcpy(pNode->pSchema->name, TSQL_TBNAME_L);
@@ -196,8 +194,8 @@ uint8_t getBinaryExprOptr(SSQLToken *pToken) {
 static tSQLSyntaxNode *parseRemainStr(char *pstr, tSQLSyntaxNode *pExpr, SSchema *pSchema, int32_t optr,
                                       int32_t numOfCols, int32_t *i) {
   // set the previous generated node as the left child of new root
-   pExpr->nodeType = TSQL_NODE_EXPR;
-   
+  pExpr->nodeType = TSQL_NODE_EXPR;
+
   // remain is the right child
   tSQLSyntaxNode *pRight = createSyntaxTree(pSchema, numOfCols, pstr, i);
   if (pRight == NULL || (pRight->nodeType == TSQL_NODE_COL && pExpr->nodeType != TSQL_NODE_VALUE) ||
@@ -208,13 +206,11 @@ static tSQLSyntaxNode *parseRemainStr(char *pstr, tSQLSyntaxNode *pExpr, SSchema
   }
 
   tSQLSyntaxNode *pNewExpr = (tSQLSyntaxNode *)calloc(1, sizeof(tSQLSyntaxNode));
-  
-  uint8_t k = optr;
+  uint8_t         k = optr;
   reviseBinaryExprIfNecessary(&pExpr, &pRight, &k);
-  
-  pNewExpr->_node.pLeft  = pExpr;
+  pNewExpr->_node.pLeft = pExpr;
   pNewExpr->_node.pRight = pRight;
-  pNewExpr->_node.optr   = k;
+  pNewExpr->_node.optr = k;
 
   pNewExpr->_node.hasPK = isQueryOnPrimaryKey(pSchema[0].name, pExpr, pRight);
   pNewExpr->nodeType = TSQL_NODE_EXPR;
@@ -304,27 +300,29 @@ static tSQLSyntaxNode *createSyntaxTree(SSchema *pSchema, int32_t numOfCols, cha
   }
 
   /* create binary expr as the child of new parent node */
-  tSQLSyntaxNode *pn = (tSQLSyntaxNode *)calloc(1, sizeof(tSQLSyntaxNode));
+  tSQLSyntaxNode *pBinExpr = (tSQLSyntaxNode *)calloc(1, sizeof(tSQLSyntaxNode));
   reviseBinaryExprIfNecessary(&pLeft, &pRight, &optr);
-  
-  pn->_node.hasPK = isQueryOnPrimaryKey(pSchema[0].name, pLeft, pRight);
-  pn->_node.pLeft  = pLeft;
-  pn->_node.pRight = pRight;
-  pn->_node.optr   = optr;
+
+  pBinExpr->_node.hasPK = isQueryOnPrimaryKey(pSchema[0].name, pLeft, pRight);
+  pBinExpr->_node.pLeft = pLeft;
+  pBinExpr->_node.pRight = pRight;
+  pBinExpr->_node.optr = optr;
 
   t0 = tStrGetToken(str, i, true, 0, NULL);
 
   if (t0.n == 0 || t0.type == TK_RP) {
-    pn->nodeType = TSQL_NODE_EXPR;
-    return pn;
+    tSQLSyntaxNode *pn = malloc(sizeof(tSQLSyntaxNode));
+    pBinExpr->nodeType = TSQL_NODE_EXPR;
+    return pBinExpr;
   } else {
     uint8_t localOptr = getBinaryExprOptr(&t0);
     if (localOptr == 0) {
       pError("not support binary operator:%d", t0.type);
+      free(pBinExpr);
       return NULL;
     }
 
-    return parseRemainStr(str, pn, pSchema, localOptr, numOfCols, i);
+    return parseRemainStr(str, pBinExpr, pSchema, localOptr, numOfCols, i);
   }
 }
 
@@ -336,10 +334,9 @@ void tSQLBinaryExprFromString(tSQLSyntaxNode **pExpr, SSchema *pSchema, int32_t 
 
   int32_t pos = 0;
   
-  tSQLSyntaxNode *pStxNode = createSyntaxTree(pSchema, numOfCols, src, &pos);
-  if (pStxNode != NULL) {
-    assert(pStxNode->nodeType == TSQL_NODE_EXPR);
-    *pExpr = pStxNode;
+  *pExpr = createSyntaxTree(pSchema, numOfCols, src, &pos);
+  if (*pExpr != NULL) {
+    assert((*pExpr)->nodeType == TSQL_NODE_EXPR);
   }
 }
 
