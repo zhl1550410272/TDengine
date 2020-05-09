@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/taosdata/TDengine/src/connector/go/src/taosSql"
+	_ "github.com/taosdata/driver-go/taosSql"
 )
 
 type metric struct {
@@ -100,7 +100,7 @@ func init() {
 	flag.StringVar(&dbname, "dbname", "telegraf", "Database name where to store metrics")
 	flag.StringVar(&dbuser, "dbuser", "root", "User for host to send result metrics")
 	flag.StringVar(&dbpassword, "dbpassword", "taosdata", "User password for Host to send result metrics")
-	flag.StringVar(&rwport, "port", "10202", "remote write port")
+	flag.StringVar(&rwport, "port", "6050", "remote write port")
 	flag.IntVar(&debugprt, "debugprt", 0, "if 0 not print, if 1 print the sql")
 	flag.IntVar(&taglen, "tag-length", 30, "the max length of tag string")
 	flag.IntVar(&buffersize, "buffersize", 100, "the buffer size of metrics received")
@@ -298,7 +298,7 @@ func SerilizeTDengine(m metric, dbn string, hostip string, taglist *list.List, d
 	for _, v := range m.Tags {
 		tbna = append(tbna, v)
 	}
-	sort.Strings())
+	sort.Strings(tbna)
 	tbn := strings.Join(tbna, "") // Go map 遍历结果是随机的，必须排下序
 
 	for k, v := range m.Fields {
@@ -329,24 +329,22 @@ func SerilizeTDengine(m metric, dbn string, hostip string, taglist *list.List, d
 			sqlcmd = sqlcmd + "\"" + hostip + "\"," + "\"" + k + "\")\n"
 			execSql(dbn, sqlcmd, db)
 			IsTableCreated.Store(s, true)
-		} else {
-			idx := TAOShashID([]byte(s))
-			sqlcmd := " " + s + " values("
+		} 
+		idx := TAOShashID([]byte(s))
+		sqlcmd := " " + s + " values("
 
-			tls := strconv.FormatInt(m.TimeStamp, 10)
-			switch v.(type) {
-			case string:
-				sqlcmd = sqlcmd + tls + ",\"" + v.(string) + "\")"
-			case int64:
-				sqlcmd = sqlcmd + tls + "," + strconv.FormatInt(v.(int64), 10) + ")"
-			case float64:
-				sqlcmd = sqlcmd + tls + "," + strconv.FormatFloat(v.(float64), 'E', -1, 64) + ")"
-			default:
-				panic("Checktable error value type")
-			}
-			batchChans[idx%sqlworkers] <- sqlcmd
-			//execSql(dbn,sqlcmd)
+		tls := strconv.FormatInt(m.TimeStamp, 10)
+		switch v.(type) {
+		case string:
+			sqlcmd = sqlcmd + tls + ",\"" + v.(string) + "\")"
+		case int64:
+			sqlcmd = sqlcmd + tls + "," + strconv.FormatInt(v.(int64), 10) + ")"
+		case float64:
+			sqlcmd = sqlcmd + tls + "," + strconv.FormatFloat(v.(float64), 'E', -1, 64) + ")"
+		default:
+			panic("Checktable error value type")
 		}
+		batchChans[idx%sqlworkers] <- sqlcmd
 
 	}
 	return nil
