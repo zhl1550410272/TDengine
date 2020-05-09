@@ -448,6 +448,8 @@ JNIEXPORT jint JNICALL Java_com_taosdata_jdbc_TSDBJNIConnector_fetchRowImp(JNIEn
   }
 
   TAOS_ROW row = taos_fetch_row(result);
+  int32_t* length = taos_fetch_lengths(result);
+
   if (row == NULL) {
     int tserrno = taos_errno(tscon);
     if (tserrno == 0) {
@@ -495,15 +497,15 @@ JNIEXPORT jint JNICALL Java_com_taosdata_jdbc_TSDBJNIConnector_fetchRowImp(JNIEn
       }
         break;
       case TSDB_DATA_TYPE_BINARY: {
-        strncpy(tmp, row[i], (size_t) fields[i].bytes);  // handle the case that terminated does not exist
+        strncpy(tmp, row[i], (size_t) length[i]);  // handle the case that terminated does not exist
         (*env)->CallVoidMethod(env, rowobj, g_rowdataSetStringFp, i, (*env)->NewStringUTF(env, tmp));
 
-        memset(tmp, 0, (size_t) fields[i].bytes);
+        memset(tmp, 0, (size_t) length[i]);
         break;
       }
       case TSDB_DATA_TYPE_NCHAR: {
         (*env)->CallVoidMethod(env, rowobj, g_rowdataSetByteArrayFp, i,
-                               jniFromNCharToByteArray(env, (char*)row[i], fields[i].bytes));
+                               jniFromNCharToByteArray(env, (char*)row[i], length[i]));
         break;
       }
       case TSDB_DATA_TYPE_TIMESTAMP:
