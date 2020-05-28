@@ -154,7 +154,40 @@ SDataRow tdNewDataRowFromSchema(STSchema *pSchema) {
 
 int tdSetTagCol(SDataRow row, void *value, int16_t len, int8_t type, int16_t colId){ //insert/update tag value and update all the information
   ASSERT(((STagRow *)row)->pData != NULL);
-  //STagCol * stCol = tdQueryTagColByID()
+  if(type == TSDB_DATA_TYPE_BINARY||type == TSDB_DATA_TYPE_NCHAR){
+      ASSERT(varDataLen(value) == len);  // Check if the value len is correct
+  }
+ 
+  int res = 0;
+  STagCol *pBase = ((STagRow *)row)->tagCols;
+  void * pdata = ((STagRow *)row)->pData;
+  int16_t pdatalen = ((STagRow *)row)->dataLen;
+
+  STagCol * stCol = tdQueryTagColByID(row,colId,TD_GE);
+  if(NULL == stCol){
+      res = tdAppendColVal(row,value,type,colId);
+      return res;
+  }
+  if (stCol->colId == colId) { 
+    int16_t old_taglen = 0;
+    void * old_value = pdata + stCol->offset;
+    if (stCol->colType == TSDB_DATA_TYPE_BINARY||stCol->colType == TSDB_DATA_TYPE_NCHAR) {
+        old_taglen = varDataLen(old_value); 
+    }else {
+        old_taglen = TYPE_BYTES[stCol->colType];
+    }
+    
+    if (old_taglen < len) {
+        pdata = realloc(pdata, pdatalen + len - old_taglen);
+        ((STagRow *)row)->dataLen = pdatalen + len - old_taglen;
+    }
+    int16_t colIndex = ((int64_t)stCol -(int64_t)pBase)/sizeof(STagCol);
+
+    //for (int i = colIndex + 1; i<)
+    // not finished
+    
+  }
+
 
   return 0;
 };  
