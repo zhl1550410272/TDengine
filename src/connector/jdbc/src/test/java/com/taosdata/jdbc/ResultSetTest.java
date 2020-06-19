@@ -516,7 +516,7 @@ public class ResultSetTest {
             assertTrue(e.getMessage().contains("this operation is NOT supported currently!"));
         }
         try {
-            resSet.getObject(0, new HashMap<>());
+            resSet.getObject(0, new HashMap<String, Class<?>>());
         } catch (SQLException e) {
             assertTrue(e.getMessage().contains("this operation is NOT supported currently!"));
         }
@@ -541,7 +541,7 @@ public class ResultSetTest {
             assertTrue(e.getMessage().contains("this operation is NOT supported currently!"));
         }
         try {
-            resSet.getObject("", new HashMap<>());
+            resSet.getObject("", new HashMap<String, Class<?>>());
         } catch (SQLException e) {
             assertTrue(e.getMessage().contains("this operation is NOT supported currently!"));
         }
