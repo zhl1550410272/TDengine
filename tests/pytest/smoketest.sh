@@ -58,4 +58,10 @@ python3 ./test.py $1 -s && sleep 1
 #query
 python3 ./test.py $1 -f query/filter.py
 python3 ./test.py $1 -s && sleep 1
+python3 ./test.py -f query/filterAllIntTypes.py
+python3 ./test.py $1 -s && sleep 1
+python3 ./test.py -f query/filterFloatAndDouble.py
+python3 ./test.py $1 -s && sleep 1
+python3 ./test.py -f query/filterOtherTypes.py
+python3 ./test.py $1 -s && sleep 1
 
