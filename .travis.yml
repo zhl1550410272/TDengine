@@ -180,7 +180,7 @@ matrix:
 
           cd ${TRAVIS_BUILD_DIR}/tests
 
-          ./test-all.sh smoke COVER
+          ./test-all.sh smoke
 
           TEST_RESULT=$?
 
