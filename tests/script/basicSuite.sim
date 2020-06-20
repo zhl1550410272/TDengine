@@ -12,7 +12,7 @@ run general/parser/binary_escapeCharacter.sim
 run general/parser/select_from_cache_disk.sim
 run general/stable/vnode3.sim
 run general/stream/metrics_n.sim
-run general/stream/table_n.sim
+run general/stream/table_1.sim
 run general/table/autocreate.sim
 run general/table/fill.sim
 run general/table/vgroup.sim
