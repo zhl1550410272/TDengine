@@ -9,11 +9,12 @@ public class BaseTest {
     
     @BeforeClass
     public static void setupEnv() {
-        try{
-            String path = System.getProperty("user.dir");
-            String bashPath = path + "/buildTDengine.sh";
-
-            Process ps = Runtime.getRuntime().exec(bashPath);
+                
+        String path = System.getProperty("user.dir");            
+        String[] scripts = new String[]{"python3", path + "/../../../tests/pytest/test.py", "-m", "127.0.0.1"};
+        
+        try{        
+            Process ps = Runtime.getRuntime().exec(scripts);
             ps.waitFor();
 
             BufferedReader br = new BufferedReader(new InputStreamReader(ps.getInputStream()));
