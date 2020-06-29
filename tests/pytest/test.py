@@ -81,7 +81,7 @@ if __name__ == "__main__":
         else:
             toBeKilled = "valgrind.bin"
 
-        killCmd = "ps -ef|grep -w %s| grep -v grep | awk '{print $2}' | xargs kill -HUP " % toBeKilled
+        killCmd = "ps -ef|grep -w %s| grep -v grep | awk '{print $2}' | xargs kill -HUP > /dev/null 2>&1" % toBeKilled
 
         psCmd = "ps -ef|grep -w %s| grep -v grep | awk '{print $2}'" % toBeKilled
         processID = subprocess.check_output(psCmd, shell=True)
@@ -122,9 +122,16 @@ if __name__ == "__main__":
             tdCases.runOneCluster(fileName)
     else:
         tdLog.info("Procedures for testing self-deployment")
-        conn = taos.connect(
-            host,
-            config=tdDnodes.getSimCfgPath())
+
+        while True:
+            conn = taos.connect(
+                host,
+                config=tdDnodes.getSimCfgPath())
+            tdLog.info("CBD: conn:%s conn._conn:%s" % (conn, conn._conn))
+            if conn:
+                break;
+            else:
+                time.sleep(1)
         if fileName == "all":
             tdCases.runAllLinux(conn)
         else:
