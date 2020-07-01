@@ -81,7 +81,7 @@ if __name__ == "__main__":
         else:
             toBeKilled = "valgrind.bin"
 
-        killCmd = "ps -ef|grep -w %s| grep -v grep | awk '{print $2}' | xargs kill -HUP > /dev/null 2>&1" % toBeKilled
+        killCmd = "ps -ef|grep -w %s| grep -v grep | awk '{print $2}' | xargs kill -TERM > /dev/null 2>&1" % toBeKilled
 
         psCmd = "ps -ef|grep -w %s| grep -v grep | awk '{print $2}'" % toBeKilled
         processID = subprocess.check_output(psCmd, shell=True)
@@ -91,8 +91,10 @@ if __name__ == "__main__":
             time.sleep(1)
             processID = subprocess.check_output(psCmd, shell=True)
 
-        fuserCmd = "fuser -k -n tcp 6030"
-        os.system(fuserCmd)
+        for port in range(6030, 6041):
+            fuserCmd = "fuser -k -n tcp %d" % port
+            os.system(fuserCmd)
+        time.sleep(1)
 
         tdLog.info('stop All dnodes')
         sys.exit(0)
@@ -124,14 +126,24 @@ if __name__ == "__main__":
         tdLog.info("Procedures for testing self-deployment")
 
         while True:
-            conn = taos.connect(
-                host,
-                config=tdDnodes.getSimCfgPath())
-            tdLog.info("CBD: conn:%s conn._conn:%s" % (conn, conn._conn))
+            try:
+                config=tdDnodes.getSimCfgPath()
+            except Exception as e:
+                tdLog.info("CBD: %s" % e.args[0])
+                time.sleep(1)
+
+            try:
+                conn = taos.connect(
+                    host,
+                    config)
+            except Exception as e:
+                tdLog.info("CBD: %s" % e.args[0])
+                time.sleep(1)
+                continue
+
             if conn:
                 break;
-            else:
-                time.sleep(1)
+
         if fileName == "all":
             tdCases.runAllLinux(conn)
         else:

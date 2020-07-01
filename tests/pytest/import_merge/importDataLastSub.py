@@ -31,12 +31,35 @@ class TDTestCase:
 
         tdDnodes.stop(1)
         tdDnodes.deploy(1)
-        tdDnodes.start(1)
+        try:
+            tdDnodes.start(1)
+        except Exception as e:
+            tdLog.info('CBD: tdDnodes.start')
+            tdLog.info("CBD: %s" % e.args[0])
 
-        tdSql.execute('reset query cache')
-        tdSql.execute('drop database if exists db')
-        tdSql.execute('create database db maxrows %d' % self.maxrows)
-        tdSql.execute('use db')
+        try:
+            tdSql.execute('reset query cache')
+        except Exception as e:
+            tdLog.info('CBD: reset query cache')
+            tdLog.info("CBD: %s" % e.args[0])
+
+        try:
+            tdSql.execute('drop database if exists db')
+        except Exception as e:
+            tdLog.info('CBD: drop database if exists db')
+            tdLog.info("CBD: %s" % e.args[0])
+
+        try:
+            tdSql.execute('create database db maxrows %d' % self.maxrows)
+        except Exception as e:
+            tdLog.info('CBD: create database db maxrows %d' % self.maxrows)
+            tdLog.info("CBD: %s" % e.args[0])
+
+        try:
+            tdSql.execute('use db')
+        except Exception as e:
+            tdLog.info('CBD: use db')
+            tdLog.info("CBD: %s" % e.args[0])
 
         tdLog.info("================= step1")
         tdLog.info("create 1 table")
