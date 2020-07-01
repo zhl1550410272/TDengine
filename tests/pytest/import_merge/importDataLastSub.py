@@ -41,24 +41,28 @@ class TDTestCase:
             tdSql.execute('reset query cache')
         except Exception as e:
             tdLog.info('CBD: reset query cache')
+            tdLog.info(repr(e))
             tdLog.info("CBD: %s" % e.args[0])
 
         try:
             tdSql.execute('drop database if exists db')
         except Exception as e:
             tdLog.info('CBD: drop database if exists db')
+            tdLog.info(repr(e))
             tdLog.info("CBD: %s" % e.args[0])
 
         try:
             tdSql.execute('create database db maxrows %d' % self.maxrows)
         except Exception as e:
             tdLog.info('CBD: create database db maxrows %d' % self.maxrows)
+            tdLog.info(repr(e))
             tdLog.info("CBD: %s" % e.args[0])
 
         try:
             tdSql.execute('use db')
         except Exception as e:
             tdLog.info('CBD: use db')
+            tdLog.info(repr(e))
             tdLog.info("CBD: %s" % e.args[0])
 
         tdLog.info("================= step1")
