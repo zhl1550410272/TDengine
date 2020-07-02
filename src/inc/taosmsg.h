@@ -26,6 +26,7 @@ extern "C" {
 #include "taosdef.h"
 #include "taoserror.h"
 #include "trpc.h"
+#include "tdataformat.h"
 
 // message type
 
@@ -192,7 +193,8 @@ typedef struct SSubmitBlk {
   int32_t  tid;        // table id
   int32_t  padding;    // TODO just for padding here
   int32_t  sversion;   // data schema version
-  int32_t  len;        // data part length, not including the SSubmitBlk head
+  int32_t  dataLen;    // data part length, not including the SSubmitBlk head
+  int32_t  schemaLen;  // schema length, if length is 0, no schema exists
   int16_t  numOfRows;  // total number of rows in current submit block
   char     data[];
 } SSubmitBlk;
@@ -618,7 +620,7 @@ typedef struct {
 } SMDVnodeDesc;
 
 typedef struct {
-  char db[TSDB_DB_NAME_LEN];
+  char db[TSDB_ACCT_LEN + TSDB_DB_NAME_LEN];
   SMDVnodeCfg  cfg;
   SMDVnodeDesc nodes[TSDB_MAX_REPLICA];
 } SMDCreateVnodeMsg;
@@ -673,7 +675,7 @@ typedef struct SMultiTableMeta {
 typedef struct {
   int32_t dataLen;
   char name[TSDB_TABLE_ID_LEN];
-  char data[TSDB_MAX_TAGS_LEN];
+  char data[TSDB_MAX_TAGS_LEN + TD_KV_ROW_HEAD_SIZE + sizeof(SColIdx) * TSDB_MAX_TAGS];
 } STagData;
 
 /*
