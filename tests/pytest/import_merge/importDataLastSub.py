@@ -33,42 +33,42 @@ class TDTestCase:
         tdDnodes.deploy(1)
         try:
             tdDnodes.start(1)
+            tdLog.sleep(5)
         except Exception as e:
-            tdLog.info('CBD: tdDnodes.start')
-            tdLog.info("CBD: %s" % e.args[0])
+            printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
 
         try:
             tdSql.execute('reset query cache')
         except Exception as e:
-            tdLog.info('CBD: reset query cache')
-            tdLog.info("CBD: %s" % e.args[0])
+            printf('CBD: reset query cache')
+            printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
 
         try:
             tdSql.execute('drop database if exists db')
         except Exception as e:
-            tdLog.info('CBD: drop database if exists db')
-            tdLog.info("CBD: %s" % e.args[0])
+            printf('CBD: drop database if exists db')
+            printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
 
         try:
             tdSql.execute('create database db maxrows %d' % self.maxrows)
         except Exception as e:
-            tdLog.info('CBD: create database db maxrows %d' % self.maxrows)
-            tdLog.info("CBD: %s" % e.args[0])
+            printf('CBD: create database db maxrows %d' % self.maxrows)
+            printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
 
         try:
             tdSql.execute('use db')
         except Exception as e:
-            tdLog.info('CBD: use db')
-            tdLog.info("CBD: %s" % e.args[0])
+            printf('CBD: use db')
+            printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
 
-        tdLog.info("================= step1")
+        printf("================= step1")
         tdLog.info("create 1 table")
         tdSql.execute('create table tb1 (ts timestamp, speed int)')
         tdLog.info(
             "More than %d rows less than %d rows will go to data and last file" %
             (self.maxrows, 10 + self.maxrows))
 
-        tdLog.info("================= step2")
+        printf("================= step2")
         tdLog.info("import 205 sequential data")
         startTime = self.startTime
         sqlcmd = ['import into tb1 values']
@@ -76,16 +76,17 @@ class TDTestCase:
             sqlcmd.append('(%ld, %d)' % (startTime + rid, rid))
         tdSql.execute(" ".join(sqlcmd))
 
-        tdLog.info("================= step3")
+        printf("================= step3")
         tdSql.query('select * from tb1')
         tdSql.checkRows(205)
 
-        tdLog.info("================= step4")
+        printf("================= step4")
         tdDnodes.stop(1)
         tdLog.sleep(5)
         tdDnodes.start(1)
+        tdLog.sleep(5)
 
-        tdLog.info("================= step5")
+        printf("================= step5")
         tdLog.info("import 10 data totally repetitive")
         startTime = self.startTime + 10
         sqlcmd = ['import into tb1 values']
@@ -93,7 +94,7 @@ class TDTestCase:
             sqlcmd.append('(%ld, %d)' % (startTime + rid, rid))
         tdSql.execute(" ".join(sqlcmd))
 
-        tdLog.info("================= step6")
+        printf("================= step6")
         tdSql.query('select * from tb1')
         tdSql.checkRows(205)
 

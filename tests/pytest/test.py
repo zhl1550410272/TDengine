@@ -92,20 +92,44 @@ if __name__ == "__main__":
             processID = subprocess.check_output(psCmd, shell=True)
 
         for port in range(6030, 6041):
+            usePortPID = "lsof -i tcp:%d | grep LISTEn | awk '{print $2}'" % port
+            processID = subprocess.check_output(usePortPID, shell=True)
+
+            if processID:
+                killCmd = "kill -9 %s" % processID
+                os.system(killCmd)
             fuserCmd = "fuser -k -n tcp %d" % port
             os.system(fuserCmd)
-        time.sleep(1)
+        if valgrind:
+            time.sleep(2)
 
         tdLog.info('stop All dnodes')
         sys.exit(0)
 
-    tdDnodes.init(deployPath)
+    try:
+        tdDnodes.init(deployPath)
+    except Exception as e:
+        printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
+        time.sleep(1)
     tdDnodes.setTestCluster(testCluster)
     tdDnodes.setValgrind(valgrind)
 
-    tdDnodes.stopAll()
-    tdDnodes.deploy(1)
-    tdDnodes.start(1)
+    try:
+        tdDnodes.stopAll()
+    except Exception as e:
+        printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
+        time.sleep(1)
+    try:
+        tdDnodes.deploy(1)
+    except Exception as e:
+        printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
+        time.sleep(1)
+    try:
+        tdLog.info("tdDnodes will start in test.py")
+        tdDnodes.start(1)
+    except Exception as e:
+        printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
+        time.sleep(1)
 
     if masterIp == "":
         host = '127.0.0.1'
@@ -129,7 +153,7 @@ if __name__ == "__main__":
             try:
                 config=tdDnodes.getSimCfgPath()
             except Exception as e:
-                tdLog.info("CBD: %s" % e.args[0])
+                printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
                 time.sleep(1)
 
             try:
@@ -137,7 +161,7 @@ if __name__ == "__main__":
                     host,
                     config)
             except Exception as e:
-                tdLog.info("CBD: %s" % e.args[0])
+                printf("\033[1;33m CBD: %s %s\033[0m" % e.args[0])
                 time.sleep(1)
                 continue
 

@@ -256,6 +256,11 @@ class TDDnode:
                 time.sleep(1)
                 processID = subprocess.check_output(
                     psCmd, shell=True).decode("utf-8")
+            for port in range(6030, 6041):
+                fuserCmd = "fuser -k -n tcp %d" % port
+                os.system(fuserCmd)
+            if self.valgrind:
+                time.sleep(2)
 
             self.running = 0
             tdLog.debug("dnode:%d is stopped by kill -INT" % (self.index))
@@ -277,6 +282,11 @@ class TDDnode:
                 time.sleep(1)
                 processID = subprocess.check_output(
                     psCmd, shell=True).decode("utf-8")
+            for port in range(6030, 6041):
+                fuserCmd = "fuser -k -n tcp %d" % port
+                os.system(fuserCmd)
+            if self.valgrind:
+                time.sleep(2)
 
             self.running = 0
             tdLog.debug("dnode:%d is stopped by kill -KILL" % (self.index))
