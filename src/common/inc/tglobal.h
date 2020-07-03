@@ -117,6 +117,7 @@ extern char    tsDataDir[];
 extern char    tsLogDir[];
 extern char    tsScriptDir[];
 extern int64_t tsMsPerDay[3];
+extern char    tsVnodeBakDir[];
 
 // system info
 extern char    tsOsName[];
@@ -128,10 +129,10 @@ extern float   tsTotalLogDirGB;
 extern float   tsTotalTmpDirGB;
 extern float   tsTotalDataDirGB;
 extern float   tsAvailLogDirGB;
-extern float   tsAvailTmpDirGB;
+extern float   tsAvailTmpDirectorySpace;
 extern float   tsAvailDataDirGB;
 extern float   tsMinimalLogDirGB;
-extern float   tsMinimalTmpDirGB;
+extern float   tsReservedTmpDirectorySpace;
 extern float   tsMinimalDataDirGB;
 extern int32_t tsTotalMemoryMB;
 extern int32_t tsVersion;

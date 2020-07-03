@@ -27,6 +27,7 @@
 #include "tref.h"
 #include "tsdb.h"
 #include "tsqlfunction.h"
+#include "query.h"
 
 struct SColumnFilterElem;
 typedef bool (*__filter_func_t)(struct SColumnFilterElem* pFilter, char* val1, char* val2);
@@ -161,12 +162,12 @@ typedef struct SQuery {
 } SQuery;
 
 typedef struct SQueryRuntimeEnv {
-  SResultInfo*         resultInfo;  // todo refactor to merge with SWindowResInfo
+  SResultInfo*         resultInfo;       // todo refactor to merge with SWindowResInfo
   SQuery*              pQuery;
   SQLFunctionCtx*      pCtx;
   int16_t              numOfRowsPerPage;
   int16_t              offset[TSDB_MAX_COLUMNS];
-  uint16_t             scanFlag;  // denotes reversed scan of data or not
+  uint16_t             scanFlag;         // denotes reversed scan of data or not
   SFillInfo*           pFillInfo;
   SWindowResInfo       windowResInfo;
   STSBuf*              pTSBuf;
@@ -176,17 +177,18 @@ typedef struct SQueryRuntimeEnv {
   void*                pQueryHandle;
   void*                pSecQueryHandle;  // another thread for
   SDiskbasedResultBuf* pResultBuf;       // query result buffer based on blocked-wised disk file
-  bool                 topBotQuery;      // false;
+  bool                 topBotQuery;      // false
+  int32_t              prevGroupId;      // previous executed group id
 } SQueryRuntimeEnv;
 
 typedef struct SQInfo {
-  void*   signature;
-  int32_t pointsInterpo;
-  int32_t code;  // error code to returned to client
-  sem_t   dataReady;
-  void*   tsdb;
-  int32_t vgId;
-
+  void*            signature;
+  int32_t          pointsInterpo;
+  int32_t          code;  // error code to returned to client
+  sem_t            dataReady;
+  void*            tsdb;
+  void*            param;
+  int32_t          vgId;
   STableGroupInfo  tableGroupInfo;       // table id list < only includes the STable list>
   STableGroupInfo  tableqinfoGroupInfo;  // this is a group array list, including SArray<STableQueryInfo*> structure
   SQueryRuntimeEnv runtimeEnv;
@@ -201,8 +203,9 @@ typedef struct SQInfo {
    * We later may refactor to remove this attribution by using another flag to denote
    * whether a multimeter query is completed or not.
    */
-  int32_t tableIndex;
-  int32_t numOfGroupResultPages;
+  int32_t          tableIndex;
+  int32_t          numOfGroupResultPages;
+  _qinfo_free_fn_t fn;
 } SQInfo;
 
 #endif  // TDENGINE_QUERYEXECUTOR_H

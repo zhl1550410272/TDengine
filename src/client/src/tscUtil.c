@@ -562,10 +562,8 @@ int32_t tscGetDataBlockFromList(void* pHashList, SArray* pDataBlockList, int64_t
   return TSDB_CODE_SUCCESS;
 }
 
-static int trimDataBlock(void* pDataBlock, STableDataBlocks* pTableDataBlock) {
+static int trimDataBlock(void* pDataBlock, STableDataBlocks* pTableDataBlock, bool includeSchema) {
   // TODO: optimize this function, handle the case while binary is not presented
-  int len = 0;
-
   STableMeta*   pTableMeta = pTableDataBlock->pTableMeta;
   STableComInfo tinfo = tscGetTableInfo(pTableMeta);
   SSchema*      pSchema = tscGetTableSchema(pTableMeta);
@@ -575,16 +573,37 @@ static int trimDataBlock(void* pDataBlock, STableDataBlocks* pTableDataBlock) {
   pDataBlock += sizeof(SSubmitBlk);
 
   int32_t flen = 0;  // original total length of row
-  for (int32_t i = 0; i < tinfo.numOfColumns; ++i) {
-    flen += TYPE_BYTES[pSchema[i].type];
+
+  // schema needs to be included into the submit data block
+  if (includeSchema) {
+    int32_t numOfCols = tscGetNumOfColumns(pTableDataBlock->pTableMeta);
+    for(int32_t j = 0; j < numOfCols; ++j) {
+      STColumn* pCol = (STColumn*) pDataBlock;
+      pCol->colId = pSchema[j].colId;
+      pCol->type  = pSchema[j].type;
+      pCol->bytes = pSchema[j].bytes;
+      pCol->offset = 0;
+
+      pDataBlock += sizeof(STColumn);
+      flen += TYPE_BYTES[pSchema[j].type];
+    }
+
+    int32_t schemaSize = sizeof(STColumn) * numOfCols;
+    pBlock->schemaLen = schemaSize;
+  } else {
+    for (int32_t j = 0; j < tinfo.numOfColumns; ++j) {
+      flen += TYPE_BYTES[pSchema[j].type];
+    }
+
+    pBlock->schemaLen = 0;
   }
 
   char* p = pTableDataBlock->pData + sizeof(SSubmitBlk);
-  pBlock->len = 0;
+  pBlock->dataLen = 0;
   int32_t numOfRows = htons(pBlock->numOfRows);
   
   for (int32_t i = 0; i < numOfRows; ++i) {
-    SDataRow trow = (SDataRow)pDataBlock;
+    SDataRow trow = (SDataRow) pDataBlock;
     dataRowSetLen(trow, TD_DATA_ROW_HEAD_SIZE + flen);
     dataRowSetVersion(trow, pTableMeta->sversion);
 
@@ -595,29 +614,42 @@ static int trimDataBlock(void* pDataBlock, STableDataBlocks* pTableDataBlock) {
       p += pSchema[j].bytes;
     }
 
-    // p += pTableDataBlock->rowSize;
     pDataBlock += dataRowLen(trow);
-    pBlock->len += dataRowLen(trow);
+    pBlock->dataLen += dataRowLen(trow);
   }
 
-  len = pBlock->len;
-  pBlock->len = htonl(pBlock->len);
+  int32_t len = pBlock->dataLen + pBlock->schemaLen;
+  pBlock->dataLen = htonl(pBlock->dataLen);
+  pBlock->schemaLen = htonl(pBlock->schemaLen);
+
   return len;
+}
+
+static int32_t getRowExpandSize(STableMeta* pTableMeta) {
+  int32_t result = TD_DATA_ROW_HEAD_SIZE;
+  int32_t columns = tscGetNumOfColumns(pTableMeta);
+  SSchema* pSchema = tscGetTableSchema(pTableMeta);
+  for(int32_t i = 0; i < columns; i++) {
+    if (IS_VAR_DATA_TYPE((pSchema + i)->type)) {
+      result += TYPE_BYTES[TSDB_DATA_TYPE_BINARY];
+    }
+  }
+  return result;
 }
 
 int32_t tscMergeTableDataBlocks(SSqlObj* pSql, SArray* pTableDataBlockList) {
   SSqlCmd* pCmd = &pSql->cmd;
 
-  // the expanded size when a row data is converted to SDataRow format
-  const int32_t MAX_EXPAND_SIZE = TD_DATA_ROW_HEAD_SIZE + TYPE_BYTES[TSDB_DATA_TYPE_BINARY];
+  // the maximum expanded size in byte when a row-wise data is converted to SDataRow format
+  STableDataBlocks* pOneTableBlock = taosArrayGetP(pTableDataBlockList, 0);
+  int32_t expandSize = getRowExpandSize(pOneTableBlock->pTableMeta);
 
   void* pVnodeDataBlockHashList = taosHashInit(128, taosGetDefaultHashFunction(TSDB_DATA_TYPE_BIGINT), false);
   SArray* pVnodeDataBlockList = taosArrayInit(8, POINTER_BYTES);
 
   size_t total = taosArrayGetSize(pTableDataBlockList);
   for (int32_t i = 0; i < total; ++i) {
-    STableDataBlocks* pOneTableBlock = taosArrayGetP(pTableDataBlockList, i);
-
+    pOneTableBlock = taosArrayGetP(pTableDataBlockList, i);
     STableDataBlocks* dataBuf = NULL;
     
     int32_t ret =
@@ -631,7 +663,7 @@ int32_t tscMergeTableDataBlocks(SSqlObj* pSql, SArray* pTableDataBlockList) {
     }
 
     SSubmitBlk* pBlocks = (SSubmitBlk*) pOneTableBlock->pData;
-    int64_t destSize = dataBuf->size + pOneTableBlock->size + pBlocks->numOfRows * MAX_EXPAND_SIZE;
+    int64_t destSize = dataBuf->size + pOneTableBlock->size + pBlocks->numOfRows * expandSize;
 
     if (dataBuf->nAllocSize < destSize) {
       while (dataBuf->nAllocSize < destSize) {
@@ -659,23 +691,23 @@ int32_t tscMergeTableDataBlocks(SSqlObj* pSql, SArray* pTableDataBlockList) {
     tscDebug("%p tableId:%s, sid:%d rows:%d sversion:%d skey:%" PRId64 ", ekey:%" PRId64, pSql, pOneTableBlock->tableId,
         pBlocks->tid, pBlocks->numOfRows, pBlocks->sversion, GET_INT64_VAL(pBlocks->data), GET_INT64_VAL(ekey));
 
-
-    int32_t len = pBlocks->numOfRows * (pOneTableBlock->rowSize + MAX_EXPAND_SIZE);
+    int32_t len = pBlocks->numOfRows * (pOneTableBlock->rowSize + expandSize);
 
     pBlocks->tid = htonl(pBlocks->tid);
     pBlocks->uid = htobe64(pBlocks->uid);
     pBlocks->sversion = htonl(pBlocks->sversion);
     pBlocks->numOfRows = htons(pBlocks->numOfRows);
+    pBlocks->schemaLen = 0;
 
     // erase the empty space reserved for binary data
-    int32_t finalLen = trimDataBlock(dataBuf->pData + dataBuf->size, pOneTableBlock);
+    int32_t finalLen = trimDataBlock(dataBuf->pData + dataBuf->size, pOneTableBlock, pCmd->submitSchema);
     assert(finalLen <= len);
 
     dataBuf->size += (finalLen + sizeof(SSubmitBlk));
     assert(dataBuf->size <= dataBuf->nAllocSize);
 
     // the length does not include the SSubmitBlk structure
-    pBlocks->len = htonl(finalLen);
+    pBlocks->dataLen = htonl(finalLen);
 
     dataBuf->numOfTables += 1;
   }

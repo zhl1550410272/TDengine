@@ -415,11 +415,11 @@ static int32_t tsdbCheckAndSetDefaultCfg(STsdbCfg *pCfg) {
 
   // Check maxTables
   if (pCfg->maxTables == -1) {
-    pCfg->maxTables = TSDB_DEFAULT_TABLES;
+    pCfg->maxTables = TSDB_DEFAULT_TABLES+1;
   } else {
-    if (pCfg->maxTables < TSDB_MIN_TABLES || pCfg->maxTables > TSDB_MAX_TABLES) {
+    if (pCfg->maxTables - 1 < TSDB_MIN_TABLES || pCfg->maxTables - 1 > TSDB_MAX_TABLES) {
       tsdbError("vgId:%d invalid maxTables configuration! maxTables %d TSDB_MIN_TABLES %d TSDB_MAX_TABLES %d",
-                pCfg->tsdbId, pCfg->maxTables, TSDB_MIN_TABLES, TSDB_MAX_TABLES);
+                pCfg->tsdbId, pCfg->maxTables - 1, TSDB_MIN_TABLES, TSDB_MAX_TABLES);
       goto _err;
     }
   }
@@ -768,7 +768,8 @@ static SSubmitBlk *tsdbGetSubmitMsgNext(SSubmitMsgIter *pIter) {
   SSubmitBlk *pBlock = pIter->pBlock;
   if (pBlock == NULL) return NULL;
 
-  pBlock->len = htonl(pBlock->len);
+  pBlock->dataLen = htonl(pBlock->dataLen);
+  pBlock->schemaLen = htonl(pBlock->schemaLen);
   pBlock->numOfRows = htons(pBlock->numOfRows);
   pBlock->uid = htobe64(pBlock->uid);
   pBlock->tid = htonl(pBlock->tid);
@@ -776,11 +777,11 @@ static SSubmitBlk *tsdbGetSubmitMsgNext(SSubmitMsgIter *pIter) {
   pBlock->sversion = htonl(pBlock->sversion);
   pBlock->padding = htonl(pBlock->padding);
 
-  pIter->len = pIter->len + sizeof(SSubmitBlk) + pBlock->len;
+  pIter->len = pIter->len + sizeof(SSubmitBlk) + pBlock->dataLen;
   if (pIter->len >= pIter->totalLen) {
     pIter->pBlock = NULL;
   } else {
-    pIter->pBlock = (SSubmitBlk *)((char *)pBlock + pBlock->len + sizeof(SSubmitBlk));
+    pIter->pBlock = (SSubmitBlk *)((char *)pBlock + pBlock->dataLen + sizeof(SSubmitBlk));
   }
 
   return pBlock;
@@ -832,10 +833,10 @@ _err:
 }
 
 static int tsdbInitSubmitBlkIter(SSubmitBlk *pBlock, SSubmitBlkIter *pIter) {
-  if (pBlock->len <= 0) return -1;
-  pIter->totalLen = pBlock->len;
+  if (pBlock->dataLen <= 0) return -1;
+  pIter->totalLen = pBlock->dataLen;
   pIter->len = 0;
-  pIter->row = (SDataRow)(pBlock->data);
+  pIter->row = (SDataRow)(pBlock->data+pBlock->schemaLen);
   return 0;
 }
 
